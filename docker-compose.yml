@@ -1,5 +1,3 @@
-version: "3.9"
-
 # 项目网络 — 所有服务在独立的 bridge 网络中，避免与其他项目冲突
 networks:
   musicrec_net:

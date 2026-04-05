@@ -1,0 +1,48 @@
+<script setup lang="ts">
+import Sidebar from '@/components/layout/Sidebar.vue'
+import PlayerBar from '@/components/player/PlayerBar.vue'
+import { useAuthStore } from '@/stores/auth'
+import { useFavoritesStore } from '@/stores/favorites'
+import { onMounted } from 'vue'
+
+const auth = useAuthStore()
+const favStore = useFavoritesStore()
+
+onMounted(() => {
+  // Restore favorites if user was already logged in (e.g. page refresh)
+  if (auth.isLoggedIn && !favStore.loaded) {
+    favStore.loadFavorites()
+  }
+})
+</script>
+
+<template>
+  <div class="app-layout">
+    <Sidebar />
+    <main class="main-content">
+      <router-view v-slot="{ Component }">
+        <transition name="page" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
+    </main>
+    <PlayerBar />
+  </div>
+</template>
+
+<style scoped>
+.page-enter-active,
+.page-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.page-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+</style>

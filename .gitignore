@@ -1,0 +1,60 @@
+# Python environments
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Frontend & Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor directories and files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific generated files
+data/models/**/*.pt
+data/models/**/*.npy
+data/models/**/*.npz
+data/models/**/*.onnx
+data/processed/*.parquet
+data/processed/*.json
+
+# Keep directory structures
+!data/models/**/meta.json
+!data/models/**/.gitkeep
+!data/processed/.gitkeep
+
+# Temporary AI / Debug files
+tmp_tree.txt
+tmp_hash.txt
+tmp*.py
+tmp*.txt
+
+# Ignore logs
+*.log
+logs/

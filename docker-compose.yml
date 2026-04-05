@@ -1,0 +1,133 @@
+version: "3.9"
+
+# 项目网络 — 所有服务在独立的 bridge 网络中，避免与其他项目冲突
+networks:
+  musicrec_net:
+    driver: bridge
+    name: musicrec_net
+
+services:
+  # ---- MySQL 8.0 ----
+  musicrec_mysql:
+    image: mysql:8.0
+    container_name: musicrec_mysql          # 唯一容器名
+    hostname: musicrec_mysql
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "13307:3306"                        # 13307 避免与 3306/3307 冲突
+    volumes:
+      - musicrec_mysql_data:/var/lib/mysql  # 卷名加项目前缀
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    networks:
+      - musicrec_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- Redis 7 ----
+  musicrec_redis:
+    image: redis:7-alpine
+    container_name: musicrec_redis          # 唯一容器名
+    hostname: musicrec_redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "16379:6379"                        # 16379 避免与 6379/6380 冲突
+    volumes:
+      - musicrec_redis_data:/data           # 卷名加项目前缀
+    networks:
+      - musicrec_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- FastAPI Backend ----
+  musicrec_backend:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: musicrec_backend
+    hostname: musicrec_backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # In Docker, services communicate via hostname on the internal network
+      MYSQL_HOST: musicrec_mysql
+      MYSQL_PORT: 3306
+      REDIS_HOST: musicrec_redis
+      REDIS_PORT: 6379
+    ports:
+      - "18000:8000"                        # 18000 避免与 8000/8001 冲突
+    volumes:
+      - ./app:/app/app
+      - ./shared_contracts:/app/shared_contracts
+      - ./ml_pipeline:/app/ml_pipeline
+      - ./data:/app/data
+    networks:
+      - musicrec_net
+    depends_on:
+      musicrec_mysql:
+        condition: service_healthy
+      musicrec_redis:
+        condition: service_healthy
+
+  # ---- Data Seeder ----
+  musicrec_seeder:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: musicrec_seeder
+    hostname: musicrec_seeder
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@musicrec_mysql:3306/${MYSQL_DATABASE}
+    volumes:
+      - ./app:/app/app
+      - ./shared_contracts:/app/shared_contracts
+      - ./ml_pipeline:/app/ml_pipeline
+      - ./scripts:/app/scripts
+      - ./data:/app/data
+    networks:
+      - musicrec_net
+    depends_on:
+      musicrec_mysql:
+        condition: service_healthy
+    command: >
+      bash -c "python scripts/seed_data.py && python ml_pipeline/data_process/generate_synthetic_data.py"
+
+  # ---- Vue3 Frontend (dev) ----
+  musicrec_frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: musicrec_frontend
+    hostname: musicrec_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_PROXY_TARGET: "http://musicrec_backend:8000"
+    ports:
+      - "13000:3000"                        # 13000 避免与 3000 冲突
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    networks:
+      - musicrec_net
+    depends_on:
+      - musicrec_backend
+
+volumes:
+  musicrec_mysql_data:                      # 唯一卷名，不与其他项目共享
+    name: musicrec_mysql_data
+  musicrec_redis_data:
+    name: musicrec_redis_data

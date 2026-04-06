@@ -90,12 +90,17 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@musicrec_mysql:3306/${MYSQL_DATABASE}
+      HTTP_PROXY: http://host.docker.internal:7897
+      HTTPS_PROXY: http://host.docker.internal:7897
+      NO_PROXY: musicrec_mysql,musicrec_redis,localhost,127.0.0.1
     volumes:
       - ./app:/app/app
       - ./shared_contracts:/app/shared_contracts
       - ./ml_pipeline:/app/ml_pipeline
       - ./scripts:/app/scripts
       - ./data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - musicrec_net
     depends_on:

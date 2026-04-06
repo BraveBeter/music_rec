@@ -21,6 +21,8 @@ _deepfm = None
 _feature_meta = None
 _user_features = None
 _item_features = None
+_user2idx = None
+_track2idx = None
 _onnx_session = None
 
 
@@ -68,13 +70,15 @@ def _load_onnx():
 
 def _load_features():
     """Lazy-load user and item features."""
-    global _user_features, _item_features
+    global _user_features, _item_features, _user2idx, _track2idx
     if _user_features is not None:
         return
 
     try:
         _user_features = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user_features.parquet"))
         _item_features = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "item_features.parquet"))
+        _user2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet")).values)
+        _track2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet")).values)
         logger.info(f"Loaded features: {len(_user_features)} users, {len(_item_features)} items")
     except Exception as e:
         logger.warning(f"Failed to load features: {e}")
@@ -150,11 +154,9 @@ def rank_candidates(
         sparse_vals = []
         for feat in sparse_features:
             if feat == "user_idx":
-                sparse_vals.append(int(user_row.get("user_id", 0)))
+                sparse_vals.append(int(_user2idx.get(user_id, 0)))
             elif feat == "track_idx":
-                # Need track index
-                track2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet")).values)
-                sparse_vals.append(int(track2idx.get(track_id, 0)))
+                sparse_vals.append(int(_track2idx.get(track_id, 0)))
             elif feat in user_row.index:
                 sparse_vals.append(int(user_row[feat]))
             elif feat in item_row.index:

@@ -138,6 +138,8 @@ def _reset_inference_singletons():
     ranking_mod._feature_meta = None
     ranking_mod._user_features = None
     ranking_mod._item_features = None
+    ranking_mod._user2idx = None
+    ranking_mod._track2idx = None
     ranking_mod._onnx_session = None
     logger.info("Reset inference module singletons.")
 

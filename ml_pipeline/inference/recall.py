@@ -104,16 +104,17 @@ def multi_recall(
         for track_id, score in sasrec_results:
             candidates[track_id] = (score, "sasrec")
 
-    # 2. ItemCF recall
+    # 2. ItemCF recall (weight=1.2 to boost CF signal)
     if user_id is not None:
         itemcf_results = itemcf_recall(user_id, top_k=itemcf_k)
         for track_id, score in itemcf_results:
+            boosted_score = score * 1.2
             if track_id not in candidates:
-                candidates[track_id] = (score, "itemcf")
+                candidates[track_id] = (boosted_score, "itemcf")
             else:
                 # Blend scores if from multiple sources
                 existing_score = candidates[track_id][0]
-                candidates[track_id] = (existing_score + score * 0.5, "sasrec+itemcf")
+                candidates[track_id] = (existing_score + boosted_score, "sasrec+itemcf")
 
     # 3. Popularity fallback
     if popular_tracks:

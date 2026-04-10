@@ -83,17 +83,53 @@ async def proxy_preview(track_id: str, db: AsyncSession = Depends(get_db)):
     stream_url = fresh_url or track.preview_url
     logger.debug(f"Proxying audio for {track_id}")
 
+    # Build list of URLs to try (fresh first, then stored fallback)
+    urls_to_try = [stream_url]
+    if fresh_url and fresh_url != track.preview_url:
+        urls_to_try.append(track.preview_url)
+
+    # Pre-check CDN: send a streaming request and verify status before
+    # committing to StreamingResponse.  The httpx client must stay alive
+    # for the duration of the stream, so we create it outside the generator.
+    # Connect timeout is generous (15s) because TLS through a proxy to an
+    # overseas CDN can be slow.
+    client = httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=15.0, read=30.0, write=5.0, pool=5.0),
+    )
+
+    cdn_resp = None
+    try:
+        for url in urls_to_try:
+            resp = await client.send(
+                client.build_request("GET", url, headers=_PROXY_HEADERS),
+                stream=True,
+            )
+            if resp.status_code in (200, 206):
+                cdn_resp = resp
+                break
+            logger.warning(f"CDN returned {resp.status_code} for track {track_id} (url={url[:80]}...)")
+            await resp.aclose()
+    except (httpx.TimeoutException, httpx.ConnectError) as e:
+        logger.warning(f"CDN connection failed for {track_id}: {type(e).__name__}")
+    except Exception as e:
+        logger.warning(f"Unexpected CDN error for {track_id}: {e}")
+
+    if cdn_resp is None:
+        await client.aclose()
+        raise HTTPException(
+            status_code=502,
+            detail="Audio preview unavailable: CDN connection failed. "
+                   "The track may be geo-restricted or the network is unstable.",
+        )
+
     async def _stream():
-        async with httpx.AsyncClient(
-            follow_redirects=True,
-            timeout=httpx.Timeout(connect=5.0, read=30.0, write=5.0, pool=5.0),
-        ) as client:
-            async with client.stream("GET", stream_url, headers=_PROXY_HEADERS) as resp:
-                if resp.status_code not in (200, 206):
-                    logger.warning(f"CDN returned {resp.status_code} for track {track_id}")
-                    return
-                async for chunk in resp.aiter_bytes(chunk_size=8192):
-                    yield chunk
+        try:
+            async for chunk in cdn_resp.aiter_bytes(chunk_size=8192):
+                yield chunk
+        finally:
+            await cdn_resp.aclose()
+            await client.aclose()
 
     return StreamingResponse(
         _stream(),

@@ -43,7 +43,7 @@ data/models/**/*.npz
 data/models/**/*.onnx
 data/processed/*.parquet
 data/processed/*.json
-
+data/raw/
 # Keep directory structures
 !data/models/**/meta.json
 !data/models/**/.gitkeep
@@ -58,3 +58,6 @@ tmp*.txt
 # Ignore logs
 *.log
 logs/
+
+# others
+thesis/

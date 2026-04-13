@@ -65,6 +65,11 @@ services:
       MYSQL_PORT: 3306
       REDIS_HOST: musicrec_redis
       REDIS_PORT: 6379
+      HTTP_PROXY: http://host.docker.internal:7897
+      HTTPS_PROXY: http://host.docker.internal:7897
+      NO_PROXY: musicrec_mysql,musicrec_redis,localhost,127.0.0.1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "18000:8000"                        # 18000 避免与 8000/8001 冲突
     volumes:

@@ -43,7 +43,8 @@ data/models/**/*.npz
 data/models/**/*.onnx
 data/processed/*.parquet
 data/processed/*.json
-data/raw/
+data/raw
+
 # Keep directory structures
 !data/models/**/meta.json
 !data/models/**/.gitkeep

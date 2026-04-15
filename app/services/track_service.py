@@ -1,6 +1,6 @@
 """Track service."""
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, text
 
 from app.models.track import Track
 
@@ -54,3 +54,53 @@ async def get_popular_tracks(db: AsyncSession, limit: int = 20) -> list[Track]:
         .limit(limit)
     )
     return result.scalars().all()
+
+
+async def get_diverse_popular_tracks(
+    db: AsyncSession,
+    limit: int = 20,
+    max_per_genre: int = 3,
+) -> list[Track]:
+    """Get popular tracks with genre diversity constraints."""
+    result = await db.execute(text("""
+        SELECT t.track_id, t.title, t.artist_name, t.album_name,
+               t.release_year, t.duration_ms, t.play_count, t.status,
+               t.preview_url, t.cover_url, t.created_at, tg.tag_name
+        FROM tracks t
+        LEFT JOIN track_tags tt ON t.track_id = tt.track_id
+        LEFT JOIN tags tg ON tt.tag_id = tg.tag_id
+        WHERE t.status = 1
+        ORDER BY t.play_count DESC
+        LIMIT 200
+    """))
+    rows = result.fetchall()
+
+    # Interleave genres with per-genre cap
+    genre_tracks: dict[str, list[Track]] = {}
+    seen_ids: set[str] = set()
+
+    for row in rows:
+        tid = row[0]
+        if tid in seen_ids:
+            continue
+        seen_ids.add(tid)
+
+        track = await db.execute(
+            select(Track).where(Track.track_id == tid)
+        )
+        track_obj = track.scalar_one_or_none()
+        if not track_obj:
+            continue
+
+        genre = row[11] or "unknown"
+        if genre not in genre_tracks:
+            genre_tracks[genre] = []
+        if len(genre_tracks[genre]) < max_per_genre:
+            genre_tracks[genre].append(track_obj)
+
+    # Collect and sort by play_count
+    selected = []
+    for tracks in genre_tracks.values():
+        selected.extend(tracks)
+    selected.sort(key=lambda t: t.play_count, reverse=True)
+    return selected[:limit]

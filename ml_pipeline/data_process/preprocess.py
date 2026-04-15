@@ -28,8 +28,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
-async def _load_from_db() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Load interactions, tracks, and users from MySQL."""
+async def _load_from_db() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load interactions, tracks, users, and track_tags from MySQL."""
     engine = create_async_engine(DATABASE_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -75,7 +75,7 @@ async def _load_from_db() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         ])
 
     await engine.dispose()
-    return interactions, tracks, users
+    return interactions, tracks, users, track_tags
 
 
 def _clean_interactions(df: pd.DataFrame) -> pd.DataFrame:
@@ -204,7 +204,7 @@ async def run_preprocessing():
 
     # 1. Load data
     logger.info("[1/6] Loading data from database...")
-    interactions, tracks, users = await _load_from_db()
+    interactions, tracks, users, track_tags = await _load_from_db()
     logger.info(f"  Loaded: {len(interactions)} interactions, {len(tracks)} tracks, {len(users)} users")
 
     if interactions.empty:
@@ -262,6 +262,16 @@ async def run_preprocessing():
     seq_serializable = {str(k): v for k, v in sequences.items()}
     with open(os.path.join(PROCESSED_DATA_DIR, "user_sequences.json"), "w") as f:
         json.dump(seq_serializable, f)
+
+    # Save track-genre and genre-track mappings for recall diversity
+    if not track_tags.empty:
+        track_genres_map = track_tags.groupby("track_id")["tag_name"].apply(list).to_dict()
+        with open(os.path.join(PROCESSED_DATA_DIR, "track_genres.json"), "w") as f:
+            json.dump(track_genres_map, f)
+        genre_tracks_map = track_tags.groupby("tag_name")["track_id"].apply(list).to_dict()
+        with open(os.path.join(PROCESSED_DATA_DIR, "genre_tracks.json"), "w") as f:
+            json.dump(genre_tracks_map, f)
+        logger.info(f"  Saved track-genre mappings: {len(track_genres_map)} tracks, {len(genre_tracks_map)} genres")
 
     # Stats summary
     logger.info("=" * 60)

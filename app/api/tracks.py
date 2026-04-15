@@ -61,9 +61,15 @@ async def proxy_preview(track_id: str, db: AsyncSession = Depends(get_db)):
     if not track.preview_url:
         raise HTTPException(status_code=404, detail="No preview available for this track")
 
-    # Extract the numeric Deezer ID from our track_id (format: "DZ{numeric_id}")
+    # Route by track source
     fresh_url = None
-    if track_id.startswith("DZ"):
+    stream_url = track.preview_url
+
+    if track_id.startswith("JM"):
+        # Jamendo tracks: full streaming URL already stored, use directly
+        pass
+    elif track_id.startswith("DZ"):
+        # Deezer tracks: refresh signed URL from API
         dz_numeric_id = track_id[2:]
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -78,9 +84,7 @@ async def proxy_preview(track_id: str, db: AsyncSession = Depends(get_db)):
                         logger.debug(f"Got fresh signed URL for {track_id}")
         except Exception as e:
             logger.warning(f"Could not fetch fresh Deezer URL for {track_id}: {e}")
-
-    # Fall back to stored URL if API call failed
-    stream_url = fresh_url or track.preview_url
+        stream_url = fresh_url or track.preview_url
     logger.debug(f"Proxying audio for {track_id}")
 
     # Build list of URLs to try (fresh first, then stored fallback)

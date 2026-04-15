@@ -24,10 +24,10 @@
     "item_like_ratio"
   ],
   "sparse_dims": {
-    "user_idx": 60,
-    "track_idx": 183,
+    "user_idx": 800,
+    "track_idx": 204,
     "age_bucket": 5,
     "gender": 3,
-    "country_idx": 10
+    "country_idx": 20
   }
 }

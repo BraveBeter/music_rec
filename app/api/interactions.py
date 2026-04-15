@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.core.dependencies import get_current_user
-from app.models.user import User
+from common.models.user import User
 from app.schemas.interaction import InteractionCreate, InteractionResponse
 from app.services.interaction_service import log_interaction, get_user_history
 

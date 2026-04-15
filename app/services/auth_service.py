@@ -3,9 +3,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from datetime import datetime, timezone
 
-from app.models.user import User
-from app.models.interaction import UserInteraction
-from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token
+from common.models.user import User
+from common.models.interaction import UserInteraction
+from common.core.security import hash_password, verify_password, create_access_token, create_refresh_token
 
 
 USER_SEQ_KEY = "user:seq:{user_id}"

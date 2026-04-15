@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.core.dependencies import get_current_user_optional
-from app.models.user import User
+from common.models.user import User
 from app.schemas.recommendation import RecommendationResponse
 from app.services.recommendation_service import get_recommendations
 

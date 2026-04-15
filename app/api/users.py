@@ -6,9 +6,9 @@ from sqlalchemy import select, func
 
 from app.database import get_db
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.user_favorite import UserFavorite
-from app.models.interaction import UserInteraction
+from common.models.user import User
+from common.models.user_favorite import UserFavorite
+from common.models.interaction import UserInteraction
 from app.schemas.user import UserProfile, UpdateProfileRequest
 
 router = APIRouter(prefix="/users", tags=["Users"])

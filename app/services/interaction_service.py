@@ -4,8 +4,8 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.interaction import UserInteraction
-from app.models.track import Track
+from common.models.interaction import UserInteraction
+from common.models.track import Track
 from app.utils import get_redis
 
 logger = logging.getLogger("music_rec")

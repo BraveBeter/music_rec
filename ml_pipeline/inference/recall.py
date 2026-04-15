@@ -111,6 +111,38 @@ def popularity_recall(popular_tracks: list[dict], top_k: int = 50) -> list[tuple
     return results
 
 
+def _get_adaptive_weights(
+    seq_len: int,
+    sasrec_available: bool = False,
+) -> tuple[float, float, float]:
+    """
+    Adaptive weights based on user context.
+
+    Returns (itemcf_w, sasrec_w, pop_w).
+
+    Strategy:
+    - Rich interaction + long sequence → trust both CF and sequential
+    - Rich interaction + no sequence → heavy ItemCF
+    - Long sequence only → trust SASRec, moderate ItemCF
+    - Cold / sparse → rely on popularity
+    """
+    if seq_len >= 10 and sasrec_available:
+        # Strong user: both models reliable, ItemCF still dominant
+        return 1.5, 1.0, 0.1
+    elif seq_len >= 10:
+        # Strong user, no SASRec → heavy ItemCF
+        return 1.5, 0.0, 0.2
+    elif seq_len >= 3 and sasrec_available:
+        # Moderate user: balanced blend
+        return 1.2, 0.8, 0.2
+    elif seq_len >= 3:
+        # Moderate user, no SASRec
+        return 1.2, 0.0, 0.3
+    else:
+        # Cold / sparse: mostly popularity, light ItemCF
+        return 0.6, 0.0, 0.5
+
+
 def multi_recall(
     user_id: Optional[int],
     user_sequence: Optional[list[str]] = None,
@@ -159,7 +191,7 @@ def multi_recall(
         pop_results = _normalize_scores(popularity_recall(popular_tracks, top_k=popularity_k))
         for track_id, score in pop_results:
             if track_id not in candidates:
-                candidates[track_id] = (score * 0.3, "popularity")
+                candidates[track_id] = (score * pop_w, "popularity")
 
     # Sort by score descending
     result = [(tid, info[0], info[1]) for tid, info in candidates.items()]

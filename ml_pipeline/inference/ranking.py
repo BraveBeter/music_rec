@@ -21,6 +21,8 @@ _deepfm = None
 _feature_meta = None
 _user_features = None
 _item_features = None
+_user2idx = None
+_track2idx = None
 _onnx_session = None
 
 

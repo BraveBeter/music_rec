@@ -16,6 +16,7 @@ import random
 import logging
 import zipfile
 import tarfile
+import hashlib
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -564,6 +565,103 @@ def _generate_interactions_for_user(
 # ---------------------------------------------------------------------------
 # Phase 5: MySQL operations
 # ---------------------------------------------------------------------------
+MIN_TRACKS_PER_GENRE = 100  # Ensure each genre has enough tracks
+
+
+async def _ensure_genre_tracks(session, genre_tracks: dict[str, list[str]]) -> None:
+    """
+    Ensure each genre has at least MIN_TRACKS_PER_GENRE tracks.
+    Creates synthetic tracks from ARTIST_GENRE_MAP entries when a genre is underpopulated.
+    """
+    # Build reverse map: genre -> list of artists
+    genre_artists: dict[str, list[str]] = {}
+    for artist, genre in ARTIST_GENRE_MAP.items():
+        genre_artists.setdefault(genre, []).append(artist)
+
+    total_created = 0
+    for genre, artists in genre_artists.items():
+        existing = len(genre_tracks.get(genre, []))
+        needed = max(0, MIN_TRACKS_PER_GENRE - existing)
+        if needed <= 0:
+            continue
+
+        # Ensure tag exists
+        await session.execute(text("INSERT IGNORE INTO tags (tag_name) VALUES (:tag)"), {"tag": genre})
+        tag_result = await session.execute(
+            text("SELECT tag_id FROM tags WHERE tag_name = :tag"), {"tag": genre}
+        )
+        tag_row = tag_result.first()
+        if not tag_row:
+            continue
+        tag_id = tag_row[0]
+
+        # Create synthetic tracks from artist names
+        created = 0
+        for i in range(needed):
+            artist = artists[i % len(artists)]
+            # Deterministic ID from artist + index to avoid duplicates
+            raw = f"LFM-{artist}-{i}"
+            track_id = f"LFM{hashlib.md5(raw.encode()).hexdigest()[:10].upper()}"
+
+            # Skip if already exists
+            existing_check = await session.execute(
+                text("SELECT track_id FROM tracks WHERE track_id = :tid"), {"tid": track_id}
+            )
+            if existing_check.first():
+                continue
+
+            duration = random.randint(180000, 360000)  # 3-6 min
+            title_variants = ["Greatest Hits", "Best Of", "Anthology", "Collection",
+                              "Essential", "Classics", "Live", "Acoustic", "Deluxe",
+                              "Original", "Remastered", "Sessions", "Tribute"]
+            title = f"{artist.title()} - {random.choice(title_variants)} Vol.{i // len(artists) + 1}"
+
+            await session.execute(text("""
+                INSERT IGNORE INTO tracks
+                (track_id, title, artist_name, duration_ms, play_count, status)
+                VALUES (:track_id, :title, :artist, :duration, 0, 1)
+            """), {
+                "track_id": track_id, "title": title,
+                "artist": artist.title(), "duration": duration,
+            })
+
+            # Random acoustic features based on genre tendencies
+            feature_defaults = {
+                "Rock": (0.6, 0.8, 130), "Pop": (0.7, 0.6, 120),
+                "Hip-Hop": (0.8, 0.7, 95), "Electronic": (0.7, 0.8, 128),
+                "Jazz": (0.4, 0.3, 120), "Classical": (0.2, 0.2, 100),
+                "R&B": (0.6, 0.5, 100), "Latin": (0.8, 0.7, 110),
+            }
+            d, e, t = feature_defaults.get(genre, (0.5, 0.5, 120))
+            await session.execute(text("""
+                INSERT IGNORE INTO track_features
+                (track_id, danceability, energy, tempo, valence, acousticness)
+                VALUES (:track_id, :danceability, :energy, :tempo, :valence, :acousticness)
+            """), {
+                "track_id": track_id,
+                "danceability": round(random.gauss(d, 0.15), 3),
+                "energy": round(random.gauss(e, 0.15), 3),
+                "tempo": round(random.gauss(t, 20), 1),
+                "valence": round(random.uniform(0.1, 0.9), 3),
+                "acousticness": round(random.uniform(0.01, 0.6), 3),
+            })
+
+            await session.execute(text("""
+                INSERT IGNORE INTO track_tags (track_id, tag_id) VALUES (:track_id, :tag_id)
+            """), {"track_id": track_id, "tag_id": tag_id})
+
+            genre_tracks.setdefault(genre, []).append(track_id)
+            created += 1
+
+        total_created += created
+        if created > 0:
+            logger.info(f"  Created {created} tracks for genre '{genre}' (had {existing})")
+
+    if total_created > 0:
+        await session.flush()
+        logger.info(f"Total synthetic tracks created: {total_created}")
+
+
 async def _load_tracks_from_db(session) -> tuple[dict, dict, list]:
     """Load track-genre mapping from MySQL."""
     result = await session.execute(text("""
@@ -668,6 +766,18 @@ async def generate():
         logger.info(f"Track catalog: {len(all_track_ids)} tracks across {len(genre_tracks)} genres")
         for g, tracks in sorted(genre_tracks.items()):
             logger.info(f"  {g}: {len(tracks)} tracks")
+
+        # Ensure each genre has enough tracks for realistic interactions
+        logger.info("Ensuring minimum track coverage per genre...")
+        await _ensure_genre_tracks(session, genre_tracks)
+
+        # Reload after expansion
+        all_track_ids = list(track_durations.keys())
+        for tids in genre_tracks.values():
+            for tid in tids:
+                if tid not in track_durations:
+                    track_durations[tid] = 30000  # default for synthetic tracks
+        logger.info(f"Expanded catalog: {len(all_track_ids)} tracks total")
 
         # 5. Clear old data
         logger.info("Clearing old synthetic / lastfm data...")

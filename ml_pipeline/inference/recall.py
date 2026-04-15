@@ -1,9 +1,10 @@
 """
 Recall Module: Multi-channel recall for recommendation candidates.
-Combines ItemCF, SASRec, and popularity-based recall with score normalization.
+Combines ItemCF, SASRec, tag-based, and popularity-based recall with score normalization.
 """
 import os
 import sys
+import json
 import logging
 from typing import Optional
 
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 # Lazy-loaded models
 _item_cf = None
 _sasrec = None
+_track_genre_map = None
+_genre_tracks_map = None
 
 
 def _get_item_cf():
@@ -60,6 +63,40 @@ def _normalize_scores(results: list[tuple[str, float]]) -> list[tuple[str, float
     return [(tid, (s - mn) / rng) for tid, s in results]
 
 
+def _load_track_genre_map() -> dict[str, list[str]]:
+    """Lazy-load track -> genre names mapping."""
+    global _track_genre_map
+    if _track_genre_map is not None:
+        return _track_genre_map
+    try:
+        path = os.path.join(PROCESSED_DATA_DIR, "track_genres.json")
+        if os.path.exists(path):
+            with open(path) as f:
+                _track_genre_map = json.load(f)
+        else:
+            _track_genre_map = {}
+    except Exception:
+        _track_genre_map = {}
+    return _track_genre_map
+
+
+def _load_genre_tracks_map() -> dict[str, list[str]]:
+    """Lazy-load genre -> track_ids mapping."""
+    global _genre_tracks_map
+    if _genre_tracks_map is not None:
+        return _genre_tracks_map
+    try:
+        path = os.path.join(PROCESSED_DATA_DIR, "genre_tracks.json")
+        if os.path.exists(path):
+            with open(path) as f:
+                _genre_tracks_map = json.load(f)
+        else:
+            _genre_tracks_map = {}
+    except Exception:
+        _genre_tracks_map = {}
+    return _genre_tracks_map
+
+
 def _sasrec_confidence(results: list[tuple[str, float]]) -> float:
     """
     Measure SASRec confidence: how much the top scores stand out.
@@ -75,6 +112,90 @@ def _sasrec_confidence(results: list[tuple[str, float]]) -> float:
         return 0.0
     # Confidence = how much top-3 exceeds the rest, normalized
     return min(1.0, (top_mean - rest_mean) / score_range)
+
+
+def tag_based_recall(
+    user_sequence: list[str],
+    top_k: int = 50,
+) -> list[tuple[str, float]]:
+    """
+    Recall candidates based on user's preferred tags (genres).
+    Uses the user's play sequence to identify preferred genres,
+    then returns tracks from those genres weighted by affinity.
+    """
+    track_genres = _load_track_genre_map()
+    genre_tracks = _load_genre_tracks_map()
+    if not track_genres or not genre_tracks or not user_sequence:
+        return []
+
+    # Count genre frequency in user's sequence
+    genre_freq: dict[str, int] = {}
+    for tid in user_sequence:
+        for genre in track_genres.get(tid, []):
+            genre_freq[genre] = genre_freq.get(genre, 0) + 1
+
+    if not genre_freq:
+        return []
+
+    total = sum(genre_freq.values())
+    seen = set(user_sequence)
+    candidates: dict[str, float] = {}
+
+    for genre, freq in genre_freq.items():
+        genre_weight = freq / total
+        for track_id in genre_tracks.get(genre, []):
+            if track_id in seen or track_id in candidates:
+                continue
+            candidates[track_id] = genre_weight
+
+    sorted_candidates = sorted(candidates.items(), key=lambda x: x[1], reverse=True)
+    return sorted_candidates[:top_k]
+
+
+def genre_weighted_popularity_recall(
+    popular_tracks: list[dict],
+    user_liked_track_ids: set[str] | None = None,
+    top_k: int = 50,
+    max_per_genre: int = 5,
+) -> list[tuple[str, float]]:
+    """
+    Popularity recall with genre diversity and user preference weighting.
+    Limits per-genre representation and boosts genres the user likes.
+    """
+    track_genres = _load_track_genre_map()
+    if not track_genres:
+        return popularity_recall(popular_tracks, top_k=top_k)
+
+    # Count user's genre preferences from their history
+    user_genre_weight: dict[str, float] = {}
+    if user_liked_track_ids:
+        genre_count: dict[str, float] = {}
+        for tid in user_liked_track_ids:
+            for genre in track_genres.get(tid, []):
+                genre_count[genre] = genre_count.get(genre, 0) + 1
+        total = sum(genre_count.values()) or 1
+        user_genre_weight = {g: c / total for g, c in genre_count.items()}
+
+    genre_counts: dict[str, int] = {}
+    results = []
+    for i, track in enumerate(popular_tracks[:top_k * 3]):
+        track_id = track.get("track_id") or track.get("id", "")
+        genres = track_genres.get(track_id, [])
+
+        dominant_genre = genres[0] if genres else "unknown"
+        if genre_counts.get(dominant_genre, 0) >= max_per_genre:
+            continue
+        genre_counts[dominant_genre] = genre_counts.get(dominant_genre, 0) + 1
+
+        base_score = 1.0 / (i + 1)
+        genre_boost = max((user_genre_weight.get(g, 0) for g in genres), default=0) if user_genre_weight else 0
+        score = base_score * (1.0 + genre_boost * 2.0)
+
+        results.append((track_id, score))
+        if len(results) >= top_k:
+            break
+
+    return results
 
 
 def itemcf_recall(user_id: int, top_k: int = 100) -> list[tuple[str, float]]:
@@ -154,9 +275,29 @@ def multi_recall(
                 existing_score = candidates[track_id][0]
                 candidates[track_id] = (existing_score + weighted, "sasrec+itemcf")
 
-    # 3. Popularity fallback (normalized)
+    # 2.5 Tag-based recall (genre preference from user sequence)
+    if user_sequence and len(user_sequence) >= 3:
+        tag_results = _normalize_scores(tag_based_recall(user_sequence, top_k=50))
+        tag_w = 0.5
+        for track_id, score in tag_results:
+            weighted = score * tag_w
+            if track_id not in candidates:
+                candidates[track_id] = (weighted, "tag")
+            else:
+                existing_score = candidates[track_id][0]
+                candidates[track_id] = (existing_score + weighted, candidates[track_id][1])
+
+    # 3. Popularity fallback (genre-aware)
     if popular_tracks:
-        pop_results = _normalize_scores(popularity_recall(popular_tracks, top_k=popularity_k))
+        user_liked_ids = {tid for tid in candidates} if candidates else None
+        pop_results = _normalize_scores(
+            genre_weighted_popularity_recall(
+                popular_tracks,
+                user_liked_track_ids=user_liked_ids,
+                top_k=popularity_k,
+                max_per_genre=5,
+            )
+        )
         for track_id, score in pop_results:
             if track_id not in candidates:
                 candidates[track_id] = (score * 0.3, "popularity")

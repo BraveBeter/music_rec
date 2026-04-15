@@ -113,14 +113,14 @@ def _train_sasrec(sequences, track2idx):
     """Train SASRec model."""
     from ml_pipeline.models.sasrec import SASRecRecommender
     logger.info("Training SASRec...")
-    model = SASRecRecommender(hidden_dim=64, num_heads=2, num_blocks=2)
+    model = SASRecRecommender(hidden_dim=128, num_heads=2, num_blocks=2)
     model.fit(
         sequences=sequences,
         track2idx=track2idx,
-        epochs=30,
+        epochs=50,
         batch_size=128,
-        lr=1e-3,
-        patience=8,
+        lr=5e-4,
+        patience=12,
     )
     model.save()
     logger.info("SASRec trained and saved.")

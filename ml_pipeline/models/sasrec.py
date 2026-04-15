@@ -27,24 +27,37 @@ logger = logging.getLogger(__name__)
 
 
 class SASRecDataset(Dataset):
-    """Dataset for SASRec: each sample = (input_seq, positive_target, negative_target)."""
+    """Dataset for SASRec: each sample = (input_seq, positive_target, negative_target).
+
+    Item indices are offset by +1 so that 0 is reserved for padding.
+    """
 
     def __init__(self, sequences: dict[str, list[str]], track2idx: dict, max_len: int = MAX_SEQ_LEN):
         self.max_len = max_len
         self.num_items = len(track2idx)
         self.track2idx = track2idx
         self.samples = []
+        # Collect all positive items for hard-negative sampling
+        self.all_items = list(range(self.num_items))
 
         for user_id, seq in sequences.items():
-            # Convert to indices
-            idx_seq = [track2idx[tid] for tid in seq if tid in track2idx]
+            # Convert to indices (+1 offset to avoid padding collision)
+            idx_seq = [track2idx[tid] + 1 for tid in seq if tid in track2idx]
             if len(idx_seq) < 3:
                 continue
 
-            # Create training pairs: predict last item from prefix
-            for end_pos in range(2, len(idx_seq)):
-                input_seq = idx_seq[:end_pos]
-                target = idx_seq[end_pos]
+            # Remove consecutive duplicates to reduce noise
+            deduped = [idx_seq[0]]
+            for i in range(1, len(idx_seq)):
+                if idx_seq[i] != idx_seq[i - 1]:
+                    deduped.append(idx_seq[i])
+            if len(deduped) < 3:
+                continue
+
+            # Create training pairs: predict next item from prefix
+            for end_pos in range(2, len(deduped)):
+                input_seq = deduped[:end_pos]
+                target = deduped[end_pos]
                 self.samples.append((input_seq, target))
 
     def __len__(self):
@@ -56,12 +69,12 @@ class SASRecDataset(Dataset):
         # Pad / truncate to max_len
         seq = input_seq[-self.max_len:]
         pad_len = self.max_len - len(seq)
-        padded = [0] * pad_len + seq  # left-pad with 0
+        padded = [0] * pad_len + seq  # left-pad with 0 (padding token)
 
-        # Negative sampling
-        neg = np.random.randint(1, self.num_items)
+        # Negative sampling: 50% random, 50% hard (random item ≠ target)
+        neg = np.random.randint(1, self.num_items + 1)  # +1 offset range
         while neg == target:
-            neg = np.random.randint(1, self.num_items)
+            neg = np.random.randint(1, self.num_items + 1)
 
         return (
             torch.tensor(padded, dtype=torch.long),
@@ -123,7 +136,7 @@ class SASRec(nn.Module):
         num_heads: int = 2,
         num_blocks: int = 2,
         ff_dim: int = None,
-        dropout: float = 0.2,
+        dropout: float = 0.5,
     ):
         super().__init__()
         self.num_items = num_items
@@ -131,7 +144,7 @@ class SASRec(nn.Module):
         self.hidden_dim = hidden_dim
         ff_dim = ff_dim or hidden_dim * 4
 
-        # Item embedding (0 = padding)
+        # Item embedding (0 = padding, 1..num_items = items)
         self.item_embedding = nn.Embedding(num_items + 1, hidden_dim, padding_idx=0)
         self.positional_embedding = nn.Embedding(max_len, hidden_dim)
 
@@ -196,7 +209,7 @@ class SASRec(nn.Module):
             item_emb = self.item_embedding(candidate_items)  # (batch, num_cand, hidden)
             scores = (last_output.unsqueeze(1) * item_emb).sum(dim=-1)  # (batch, num_cand)
         else:
-            # Score all items
+            # Score all items: embeddings[1..num_items] map to items 0..num_items-1
             all_emb = self.item_embedding.weight[1:]  # (num_items, hidden), skip padding
             scores = torch.matmul(last_output, all_emb.T)  # (batch, num_items)
 
@@ -328,7 +341,7 @@ class SASRecRecommender:
     def recommend(self, seq: list[str], top_k: int = 20, exclude_seen: bool = True) -> list[tuple[str, float]]:
         """
         Recommend next items given a play sequence.
-        
+
         Args:
             seq: list of track_ids (chronological order)
             top_k: number of items to recommend
@@ -338,12 +351,21 @@ class SASRecRecommender:
             raise RuntimeError("Model not trained.")
 
         self.model.eval()
-        idx_seq = [self.track2idx[tid] for tid in seq if tid in self.track2idx]
+        # +1 offset: 0 is padding, items are 1..num_items
+        idx_seq = [self.track2idx[tid] + 1 for tid in seq if tid in self.track2idx]
         if not idx_seq:
             return []
 
+        # Remove consecutive duplicates (same as training)
+        deduped = [idx_seq[0]]
+        for i in range(1, len(idx_seq)):
+            if idx_seq[i] != idx_seq[i - 1]:
+                deduped.append(idx_seq[i])
+        if len(deduped) < 2:
+            return []
+
         # Pad/truncate
-        padded = idx_seq[-MAX_SEQ_LEN:]
+        padded = deduped[-MAX_SEQ_LEN:]
         pad_len = MAX_SEQ_LEN - len(padded)
         padded = [0] * pad_len + padded
 
@@ -352,20 +374,20 @@ class SASRecRecommender:
             scores = self.model.predict(input_tensor)  # (1, num_items)
             scores = scores.squeeze(0).numpy()
 
-        # Exclude seen items
+        # Exclude seen items (convert back to 0-based for indexing scores)
         if exclude_seen:
-            for tid in seq:
-                tidx = self.track2idx.get(tid)
-                if tidx is not None and tidx < len(scores):
-                    scores[tidx] = -np.inf
+            seen_set = set(deduped)
+            for item_1based in seen_set:
+                idx_0based = item_1based - 1  # scores array is 0-based
+                if 0 <= idx_0based < len(scores):
+                    scores[idx_0based] = -np.inf
 
         top_indices = np.argsort(scores)[::-1][:top_k]
         results = []
         for idx in top_indices:
             if scores[idx] <= -1e8:
                 break
-            # idx corresponds to item_embedding index (0-based, but 0 is padding in embedding)
-            # The predict() method already strips padding, so idx maps to track_idx directly
+            # idx is 0-based in scores → corresponds to track2idx value
             track_id = self.idx2track.get(idx)
             if track_id:
                 results.append((track_id, float(scores[idx])))

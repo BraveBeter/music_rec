@@ -71,7 +71,7 @@ def _load_onnx():
 def _load_features():
     """Lazy-load user and item features."""
     global _user_features, _item_features, _user2idx, _track2idx
-    if _user_features is not None:
+    if _user_features is not None and _user2idx is not None:
         return
 
     try:
@@ -194,10 +194,19 @@ def rank_candidates(
     else:
         scores = _deepfm.predict(sparse_array, dense_array)
 
-    # Blend with recall scores
+    # Normalize DeepFM scores to [0, 1] via sigmoid for stable blending
+    scores = 1.0 / (1.0 + np.exp(-scores))
+
+    # Normalize recall scores to [0, 1] for fair comparison
     if recall_scores:
+        recall_vals = list(recall_scores.values())
+        r_min, r_max = min(recall_vals), max(recall_vals)
+        r_range = r_max - r_min if r_max > r_min else 1.0
+        normalized_recall = {
+            tid: (s - r_min) / r_range for tid, s in recall_scores.items()
+        }
         for i, track_id in enumerate(valid_track_ids):
-            recall_score = recall_scores.get(track_id, 0.0)
+            recall_score = normalized_recall.get(track_id, 0.0)
             # 70% DeepFM + 30% recall
             scores[i] = scores[i] * 0.7 + recall_score * 0.3
 

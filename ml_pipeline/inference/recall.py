@@ -1,6 +1,6 @@
 """
 Recall Module: Multi-channel recall for recommendation candidates.
-Combines ItemCF, SASRec, and popularity-based recall.
+Combines ItemCF, SASRec, and popularity-based recall with score normalization.
 """
 import os
 import sys
@@ -46,6 +46,35 @@ def _get_sasrec():
         except Exception as e:
             logger.warning(f"Failed to load SASRec: {e}")
     return _sasrec
+
+
+def _normalize_scores(results: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """Min-max normalize scores to [0, 1]."""
+    if not results:
+        return results
+    scores = [s for _, s in results]
+    mn, mx = min(scores), max(scores)
+    rng = mx - mn
+    if rng < 1e-8:
+        return [(tid, 1.0) for tid, _ in results]
+    return [(tid, (s - mn) / rng) for tid, s in results]
+
+
+def _sasrec_confidence(results: list[tuple[str, float]]) -> float:
+    """
+    Measure SASRec confidence: how much the top scores stand out.
+    Returns a value in [0, 1] — higher means more confident.
+    """
+    if len(results) < 3:
+        return 0.0
+    scores = sorted([s for _, s in results], reverse=True)
+    top_mean = np.mean(scores[:3])
+    rest_mean = np.mean(scores[3:]) if len(scores) > 3 else 0.0
+    score_range = max(scores) - min(scores)
+    if score_range < 1e-8:
+        return 0.0
+    # Confidence = how much top-3 exceeds the rest, normalized
+    return min(1.0, (top_mean - rest_mean) / score_range)
 
 
 def itemcf_recall(user_id: int, top_k: int = 100) -> list[tuple[str, float]]:
@@ -123,38 +152,43 @@ def multi_recall(
     popularity_k: int = 50,
 ) -> list[tuple[str, float, str]]:
     """
-    Multi-channel recall with adaptive weights: merge candidates
-    from multiple sources, weighting each source by user context.
+    Multi-channel recall with normalized score merging and quality gating.
 
     Returns:
-        list of (track_id, score, source) tuples, deduplicated
+        list of (track_id, score, source) tuples, deduplicated and sorted
     """
     candidates: dict[str, tuple[float, str]] = {}
 
-    seq_len = len(user_sequence) if user_sequence else 0
-    sasrec_ok = seq_len >= 3
-    itemcf_w, sasrec_w, pop_w = _get_adaptive_weights(seq_len, sasrec_ok)
-
-    # 1. SASRec recall
-    if sasrec_w > 0 and user_sequence and seq_len >= 3:
-        sasrec_results = sasrec_recall(user_sequence, top_k=sasrec_k)
+    # 1. SASRec recall (with quality gating)
+    sasrec_w = 0.0
+    if user_sequence and len(user_sequence) >= 3:
+        sasrec_results = _normalize_scores(sasrec_recall(user_sequence, top_k=sasrec_k))
+        confidence = _sasrec_confidence(sasrec_results)
+        # Only trust SASRec if it shows meaningful score differentiation
+        sasrec_w = min(confidence * 2, 1.0)  # scale up, cap at 1.0
+        if sasrec_w < 0.2:
+            logger.debug(f"SASRec confidence too low ({confidence:.2f}), skipping SASRec candidates")
+            sasrec_results = []
+        else:
+            logger.debug(f"SASRec confidence={confidence:.2f}, weight={sasrec_w:.2f}")
         for track_id, score in sasrec_results:
             candidates[track_id] = (score * sasrec_w, "sasrec")
 
-    # 2. ItemCF recall
-    if itemcf_w > 0 and user_id is not None:
-        itemcf_results = itemcf_recall(user_id, top_k=itemcf_k)
+    # 2. ItemCF recall (normalized)
+    itemcf_w = 1.0  # ItemCF is the most reliable source
+    if user_id is not None:
+        itemcf_results = _normalize_scores(itemcf_recall(user_id, top_k=itemcf_k))
         for track_id, score in itemcf_results:
-            weighted_score = score * itemcf_w
+            weighted = score * itemcf_w
             if track_id not in candidates:
-                candidates[track_id] = (weighted_score, "itemcf")
+                candidates[track_id] = (weighted, "itemcf")
             else:
                 existing_score = candidates[track_id][0]
-                candidates[track_id] = (existing_score + weighted_score, "sasrec+itemcf")
+                candidates[track_id] = (existing_score + weighted, "sasrec+itemcf")
 
-    # 3. Popularity fallback
-    if pop_w > 0 and popular_tracks:
-        pop_results = popularity_recall(popular_tracks, top_k=popularity_k)
+    # 3. Popularity fallback (normalized)
+    if popular_tracks:
+        pop_results = _normalize_scores(popularity_recall(popular_tracks, top_k=popularity_k))
         for track_id, score in pop_results:
             if track_id not in candidates:
                 candidates[track_id] = (score * pop_w, "popularity")
@@ -164,7 +198,7 @@ def multi_recall(
     result.sort(key=lambda x: x[1], reverse=True)
 
     logger.debug(f"Multi-recall: {len(result)} candidates "
-                 f"(user_id={user_id}, seq_len={seq_len}, "
-                 f"w=[itemcf={itemcf_w}, sasrec={sasrec_w}, pop={pop_w}])")
+                 f"(user_id={user_id}, seq_len={len(user_sequence) if user_sequence else 0}, "
+                 f"sasrec_w={sasrec_w:.2f})")
 
     return result

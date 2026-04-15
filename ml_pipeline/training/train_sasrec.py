@@ -36,14 +36,14 @@ def main():
     logger.info(f"Sequences: {len(sequences)} users, Items: {len(track2idx)}")
 
     # Train
-    sasrec = SASRecRecommender(hidden_dim=64, num_heads=2, num_blocks=2)
+    sasrec = SASRecRecommender(hidden_dim=128, num_heads=2, num_blocks=2)
     history = sasrec.fit(
         sequences=sequences,
         track2idx=track2idx,
-        epochs=30,
+        epochs=50,
         batch_size=128,
-        lr=1e-3,
-        patience=8,
+        lr=5e-4,
+        patience=12,
     )
 
     # Save

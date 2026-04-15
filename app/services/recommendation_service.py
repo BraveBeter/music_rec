@@ -4,8 +4,8 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.models.track import Track
-from app.models.offline_recommendation import OfflineRecommendation
+from common.models.track import Track
+from common.models.offline_recommendation import OfflineRecommendation
 from app.services.track_service import get_popular_tracks
 from app.utils import get_redis
 

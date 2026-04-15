@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, RefreshResponse
 from app.services.auth_service import register_user, authenticate_user, generate_tokens
-from app.core.security import decode_token
+from common.core.security import decode_token
 from app.config import get_settings
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -82,7 +82,7 @@ async def refresh_token(request: Request, response: Response):
     if not payload or payload.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    from app.core.security import create_access_token
+    from common.core.security import create_access_token
     new_access = create_access_token({"sub": payload["sub"]})
 
     return RefreshResponse(access_token=new_access)

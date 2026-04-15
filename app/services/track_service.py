@@ -2,7 +2,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, text
 
-from app.models.track import Track
+from common.models.track import Track
 
 
 async def get_tracks(

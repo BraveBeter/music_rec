@@ -5,9 +5,9 @@ from sqlalchemy import select, delete
 
 from app.database import get_db
 from app.core.dependencies import get_current_user
-from app.models.user import User
-from app.models.user_favorite import UserFavorite
-from app.models.track import Track
+from common.models.user import User
+from common.models.user_favorite import UserFavorite
+from common.models.track import Track
 from app.schemas.track import TrackResponse
 
 router = APIRouter(prefix="/favorites", tags=["Favorites"])

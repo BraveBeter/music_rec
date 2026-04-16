@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from admin.api import auth, tracks, users, interactions, data, training, status as status_api
+from admin.api import auth, tracks, users, interactions, data, training, status as status_api, scheduler
+from admin.services.scheduler_service import SchedulerService
+from ml_pipeline.training.progress import ProgressTracker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -16,7 +18,19 @@ logger = logging.getLogger("admin")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Admin backend starting up...")
+
+    # Mark any leftover "running" training tasks as interrupted
+    ProgressTracker.mark_interrupted_on_startup()
+
+    # Start scheduler
+    svc = SchedulerService()
+    await svc.start()
+    app.state.scheduler = svc
+
     yield
+
+    # Shutdown scheduler
+    await svc.shutdown()
     logger.info("Admin backend shutting down...")
 
 
@@ -44,6 +58,7 @@ app.include_router(interactions.router)
 app.include_router(data.router)
 app.include_router(training.router)
 app.include_router(status_api.router)
+app.include_router(scheduler.router)
 
 
 @app.get("/health")

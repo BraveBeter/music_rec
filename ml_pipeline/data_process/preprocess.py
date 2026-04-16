@@ -289,48 +289,65 @@ def _build_deepfm_features(
     logger.info(f"  DeepFM data: train={len(train_deepfm)}, val={len(val_deepfm)}, test={len(test_deepfm)}")
 
 
-async def run_preprocessing():
+async def run_preprocessing(task_id: str | None = None):
     """Main preprocessing pipeline."""
+    tracker = None
+    phases = ["loading", "cleaning", "labeling", "mapping", "splitting", "sequences", "saving"]
+    total_phases = len(phases)
+
+    if task_id:
+        from ml_pipeline.training.progress import ProgressTracker
+        tracker = ProgressTracker(task_id, "preprocess", total_phases=total_phases)
+        tracker.__enter__()
+
     logger.info("=" * 60)
     logger.info("Starting data preprocessing pipeline")
     logger.info("=" * 60)
 
+    def _phase(idx: int, name: str, log_msg: str):
+        logger.info(f"[{idx + 1}/{total_phases}] {log_msg}")
+        if tracker:
+            tracker.update_phase(name, idx + 1)
+            tracker.append_log(f"[{idx + 1}/{total_phases}] {log_msg}")
+
     # 1. Load data
-    logger.info("[1/7] Loading data from database...")
+    _phase(0, "loading", "Loading data from database...")
     interactions, tracks, users, track_tags = await _load_from_db()
     logger.info(f"  Loaded: {len(interactions)} interactions, {len(tracks)} tracks, {len(users)} users")
 
     if interactions.empty:
         logger.error("No interactions found! Run generate_synthetic_data.py first.")
+        if tracker:
+            tracker.mark_completed({"error": "no_interactions"})
+            tracker.__exit__(None, None, None)
         return
 
     # 2. Clean
-    logger.info("[2/7] Cleaning interactions...")
+    _phase(1, "cleaning", "Cleaning interactions...")
     interactions = _clean_interactions(interactions)
 
     # 3. Generate labels
-    logger.info("[3/7] Generating implicit labels...")
+    _phase(2, "labeling", "Generating implicit labels...")
     interactions = _generate_implicit_labels(interactions)
 
     # 4. Build ID mappings
-    logger.info("[4/7] Building ID mappings...")
+    _phase(3, "mapping", "Building ID mappings...")
     user2idx, track2idx = _build_id_mappings(interactions)
     interactions["user_idx"] = interactions["user_id"].map(user2idx)
     interactions["track_idx"] = interactions["track_id"].map(track2idx)
 
     # 5. Split
-    logger.info("[5/7] Temporal train/val/test split...")
+    _phase(4, "splitting", "Temporal train/val/test split...")
     train, val, test = _temporal_split(interactions)
 
     # 6. Build sequences
-    logger.info("[6/7] Building user sequences for SASRec...")
+    _phase(5, "sequences", "Building user sequences for SASRec...")
     sequences = _build_user_sequences(interactions)
 
     # Save everything
-    logger.info("[7/7] Saving processed data...")
+    _phase(6, "saving", "Saving processed data...")
     os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
 
-    # Convert datetime columns to string for parquet compatibility
     for df_name, df_ref in [("interactions", interactions), ("train", train), ("val", val), ("test", test), ("users", users)]:
         if "created_at" in df_ref.columns:
             df_ref["created_at"] = df_ref["created_at"].astype(str)
@@ -342,7 +359,6 @@ async def run_preprocessing():
     tracks.to_parquet(os.path.join(PROCESSED_DATA_DIR, "tracks.parquet"), index=False)
     users.to_parquet(os.path.join(PROCESSED_DATA_DIR, "users.parquet"), index=False)
 
-    # Save ID mappings
     pd.DataFrame(list(user2idx.items()), columns=["user_id", "user_idx"]).to_parquet(
         os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet"), index=False
     )
@@ -350,13 +366,11 @@ async def run_preprocessing():
         os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet"), index=False
     )
 
-    # Save sequences as JSON for SASRec
     import json
     seq_serializable = {str(k): v for k, v in sequences.items()}
     with open(os.path.join(PROCESSED_DATA_DIR, "user_sequences.json"), "w") as f:
         json.dump(seq_serializable, f)
 
-    # Save track-genre and genre-track mappings for recall diversity
     if not track_tags.empty:
         track_genres_map = track_tags.groupby("track_id")["tag_name"].apply(list).to_dict()
         with open(os.path.join(PROCESSED_DATA_DIR, "track_genres.json"), "w") as f:
@@ -366,11 +380,8 @@ async def run_preprocessing():
             json.dump(genre_tracks_map, f)
         logger.info(f"  Saved track-genre mappings: {len(track_genres_map)} tracks, {len(genre_tracks_map)} genres")
 
-    # 7. Build DeepFM features
-    logger.info("[7/7] Building DeepFM feature data...")
     _build_deepfm_features(interactions, tracks, users, track_tags, user2idx, track2idx, train, val, test)
 
-    # Stats summary
     logger.info("=" * 60)
     logger.info("Preprocessing complete!")
     logger.info(f"  Users: {len(user2idx)}")
@@ -378,9 +389,22 @@ async def run_preprocessing():
     logger.info(f"  Total interactions: {len(interactions)}")
     logger.info(f"  Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
     logger.info(f"  User sequences: {len(sequences)}")
-    logger.info(f"  Output directory: {PROCESSED_DATA_DIR}")
     logger.info("=" * 60)
+
+    if tracker:
+        tracker.mark_completed({
+            "users": len(user2idx),
+            "tracks": len(track2idx),
+            "interactions": len(interactions),
+            "train": len(train),
+            "sequences": len(sequences),
+        })
+        tracker.__exit__(None, None, None)
 
 
 if __name__ == "__main__":
-    asyncio.run(run_preprocessing())
+    task_id = None
+    for i, arg in enumerate(sys.argv):
+        if arg == "--task-id" and i + 1 < len(sys.argv):
+            task_id = sys.argv[i + 1]
+    asyncio.run(run_preprocessing(task_id))

@@ -12,8 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.database import get_db, async_session_factory, Base, engine
 from common.models.training_schedule import TrainingSchedule, TrainingThresholdState
 from admin.services import training_service
+from ml_pipeline.training.progress import ProgressTracker
 
 logger = logging.getLogger("admin")
+
+# Global lock: only one training pipeline can run at a time
+_training_lock = asyncio.Lock()
 
 # Task type -> module mapping
 MODULE_MAP = {
@@ -112,6 +116,9 @@ class SchedulerService:
             id=job_id,
             args=[schedule.schedule_id],
             replace_existing=True,
+            max_instances=1,
+            misfire_grace_time=300,
+            coalesce=True,
         )
         logger.info(f"Registered scheduled job: {job_id} ({schedule.schedule_type}: {schedule.cron_expr or schedule.interval_minutes}m)")
 
@@ -123,30 +130,41 @@ class SchedulerService:
             pass
 
     async def _execute_scheduled_task(self, schedule_id: int):
-        """Callback when a scheduled job fires."""
-        logger.info(f"Scheduled task firing for schedule_id={schedule_id}")
-        try:
-            async with async_session_factory() as session:
-                result = await session.execute(
-                    select(TrainingSchedule).where(TrainingSchedule.schedule_id == schedule_id)
-                )
-                schedule = result.scalar_one_or_none()
-                if not schedule or not schedule.is_enabled:
+        """Callback when a scheduled job fires. Acquires global lock to prevent parallel training."""
+        if _training_lock.locked():
+            logger.info(f"Skipping schedule {schedule_id}: another training is already running")
+            return
+
+        async with _training_lock:
+            logger.info(f"Scheduled task firing for schedule_id={schedule_id}")
+            try:
+                # Double-check: is any training already active?
+                active = ProgressTracker.list_active()
+                if active:
+                    logger.info(f"Skipping schedule {schedule_id}: {len(active)} training task(s) already active")
                     return
 
-                task_type = schedule.task_type
-                schedule.last_run_at = datetime.now(timezone.utc)
-                await session.commit()
+                async with async_session_factory() as session:
+                    result = await session.execute(
+                        select(TrainingSchedule).where(TrainingSchedule.schedule_id == schedule_id)
+                    )
+                    schedule = result.scalar_one_or_none()
+                    if not schedule or not schedule.is_enabled:
+                        return
 
-            if task_type == "train_all":
-                for name, module in MODULE_MAP.items():
-                    await training_service.start_training(name, module)
-            elif task_type in MODULE_MAP:
-                await training_service.start_training(task_type, MODULE_MAP[task_type])
-            else:
-                logger.warning(f"Unknown task_type: {task_type}")
-        except Exception as e:
-            logger.error(f"Error executing scheduled task {schedule_id}: {e}")
+                    task_type = schedule.task_type
+                    schedule.last_run_at = datetime.now(timezone.utc)
+                    await session.commit()
+
+                if task_type == "train_all":
+                    for name, module in MODULE_MAP.items():
+                        await training_service.start_training(name, module)
+                elif task_type in MODULE_MAP:
+                    await training_service.start_training(task_type, MODULE_MAP[task_type])
+                else:
+                    logger.warning(f"Unknown task_type: {task_type}")
+            except Exception as e:
+                logger.error(f"Error executing scheduled task {schedule_id}: {e}")
 
     async def _check_thresholds(self):
         """Check if any threshold-based schedules should fire."""

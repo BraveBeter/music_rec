@@ -96,6 +96,7 @@ services:
       HTTP_PROXY: http://host.docker.internal:7897
       HTTPS_PROXY: http://host.docker.internal:7897
       NO_PROXY: musicrec_mysql,musicrec_redis,localhost,127.0.0.1
+      DATABASE_URL: mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@musicrec_mysql:3306/${MYSQL_DATABASE}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -135,7 +136,7 @@ services:
     command: >
       bash -c "python scripts/init_admin.py"
 
-  # ---- Vue3 Frontend (dev) ----
+  # ---- Vue3 User Frontend (dev) ----
   musicrec_frontend:
     build:
       context: ./frontend
@@ -154,6 +155,25 @@ services:
       - musicrec_net
     depends_on:
       - musicrec_backend
+
+  # ---- Vue3 Admin Frontend (dev) ----
+  musicrec_admin_web:
+    build:
+      context: ./admin-web
+      dockerfile: Dockerfile
+    container_name: musicrec_admin_web
+    hostname: musicrec_admin_web
+    restart: unless-stopped
+    environment:
+      VITE_ADMIN_API_TARGET: "http://musicrec_admin:8000"
+    ports:
+      - "14000:3001"
+    volumes:
+      - ./admin-web/src:/app/src
+    networks:
+      - musicrec_net
+    depends_on:
+      - musicrec_admin
 
 volumes:
   musicrec_mysql_data:

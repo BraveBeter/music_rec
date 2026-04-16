@@ -4,155 +4,101 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A personalized music recommendation system with a complete recall-rank pipeline and multi-level fallback. Backend is FastAPI (async), frontend is Vue 3, with MySQL 8 + Redis 7 for persistence/caching, and a standalone ML pipeline (ItemCF, SASRec, DeepFM).
+A personalized music recommendation system with multi-level fallback. Two backends (user + admin), one user frontend, MySQL 8 + Redis 7, and ML pipeline (ItemCF, SASRec, DeepFM).
 
 ## Development Commands
 
 ### Full Stack (Docker)
 ```bash
-cp .env.example .env                # First-time setup
-docker-compose down -v --remove-orphans  # Clean slate (important before rebuild)
-docker-compose up -d --build        # Build & start all 5 services
-docker logs musicrec_seeder -f      # Watch data initialization
+cp .env.example .env
+docker-compose up -d --build
 ```
-
-Services expose: `13000` (frontend), `18000` (backend), `13307` (MySQL), `16379` (Redis).
+Services: `13000` (user frontend), `18000` (user backend), `19000` (admin backend), `13307` (MySQL), `16379` (Redis).
 
 ### Backend (Local)
 ```bash
-uv run uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload          # User backend
+uv run uvicorn admin.main:app --reload --port 8001  # Admin backend
 ```
 For local dev, set `MYSQL_HOST=localhost`, `MYSQL_PORT=13307`, `REDIS_HOST=localhost`, `REDIS_PORT=16379` in `.env.local`.
 
 ### Frontend
 ```bash
-cd frontend && npm run dev
+cd frontend && npm run dev      # User frontend (port 5173)
+cd admin-web && npm run dev     # Admin frontend (port 5174)
 ```
 
 ### ML Training
 ```bash
-uv run python -m ml_pipeline.training.train_baseline   # ItemCF
-uv run python -m ml_pipeline.training.train_sasrec      # SASRec sequence model
-uv run python -m ml_pipeline.training.train_deepfm      # DeepFM ranking
+uv run python -m ml_pipeline.data_process.preprocess
+uv run python -m ml_pipeline.training.train_baseline    # ItemCF
+uv run python -m ml_pipeline.training.train_sasrec      # SASRec
+uv run python -m ml_pipeline.training.train_deepfm      # DeepFM
 ```
 
-### Tests
+### Data Scripts
 ```bash
-uv run pytest                                          # All tests
-uv run pytest tests/test_foo.py -k "test_name"         # Single test
+uv run python scripts/init_admin.py                  # Create admin account (idempotent)
+uv run python scripts/import_jamendo.py              # Import Jamendo tracks with full streaming
+uv run python -m ml_pipeline.data_process.generate_lastfm_data       # LastFM 1K users + interactions
+uv run python -m ml_pipeline.data_process.generate_synthetic_data    # Synthetic 60 users
 ```
 
 ## Architecture
 
-### Backend (`app/`)
-FastAPI with async SQLAlchemy + aiomysql. Entry point: `app/main.py`.
+### Shared Package (`common/`)
+Code shared between user backend and admin backend, mounted via Docker volumes at `/opt/common`.
+- `common/models/` — SQLAlchemy ORM models (7 tables)
+- `common/database.py` — Async engine + session factory
+- `common/core/security.py` — JWT encode/decode
+- `common/config.py` — Pydantic Settings
+- `common/schemas/` — Shared Pydantic schemas
 
-- **`api/`** — Route handlers (auth, users, tracks, interactions, recommendations, favorites). All under `/api/v1/`.
-- **`services/`** — Business logic layer. `recommendation_service.py` is the core orchestrator.
-- **`models/`** — SQLAlchemy ORM models (7 tables: users, tracks, interactions, user_favorites, track_features, offline_recommendations, tags).
-- **`schemas/`** — Pydantic request/response schemas.
-- **`config.py`** — Pydantic Settings, reads from `.env` / `.env.local`.
-- **`database.py`** — Async engine + session factory.
-- **`utils/`** — Redis client singleton (`get_redis` / `close_redis`).
+### User Backend (`app/`)
+FastAPI on port 18000. Re-exports from `common/` for backward compatibility.
+- `api/` — Routes under `/api/v1/` (auth, users, tracks, interactions, recommendations, favorites)
+- `services/` — Business logic. `recommendation_service.py` orchestrates the 4-level fallback.
+- Audio proxy in `api/tracks.py` routes by track prefix: `JM` (Jamendo full stream), `DZ` (Deezer 30s preview).
+
+### Admin Backend (`admin/`)
+FastAPI on port 19000. Independent Docker container, imports from `common/`.
+- `api/auth.py` — Admin login (checks role='admin')
+- `api/tracks.py` — Batch track import + Deezer/Jamendo fetch
+- `api/users.py` — Batch user import
+- `api/interactions.py` — Batch interaction import
+- `api/data.py` — Trigger LastFM/synthetic data generation
+- `api/training.py` — Trigger preprocess + model training (async subprocess)
+- `api/status.py` — System stats (data counts, model availability)
+
+### Track Sources (by ID prefix)
+- `DZ{id}` — Deezer API, 30s preview, proxy refreshes signed URL
+- `JM{id}` — Jamendo API, full streaming URL stored in `preview_url`
+- `LFM{hash}` — Synthetic tracks from LastFM artist mapping, no audio
 
 ### ML Pipeline (`ml_pipeline/`)
-Runs independently from the web server. Entry point for inference: `ml_pipeline/inference/pipeline.py`.
-
-- **`models/`** — Model definitions: `item_cf.py`, `sasrec.py`, `deepfm.py`, `matrix_factorization.py`.
-- **`training/`** — Training scripts for each model. Output goes to `data/models/`.
-- **`inference/`** — `pipeline.py` orchestrates recall → ranking. `recall.py` does multi-recall (ItemCF + SASRec). `ranking.py` runs DeepFM (supports ONNX runtime).
-- **`data_process/`** — `generate_synthetic_data.py` creates 60 synthetic users + 300K interactions. `feature_engineering.py` builds feature vectors. `preprocess.py` handles data prep.
-- **`evaluation/`** — Metrics (NDCG, Hit Rate, etc.) and `evaluate_all.py` for comparison reports.
+Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.py`.
+- `models/` — ItemCF, SASRec, DeepFM, MatrixFactorization
+- `training/` — Training scripts, output to `data/models/`
+- `inference/recall.py` — Multi-recall: SASRec + ItemCF + tag-based + genre-aware popularity
+- `inference/ranking.py` — DeepFM ranking (70%) + recall score (30%)
+- `inference/pipeline.py` — Full pipeline with MMR diversity re-ranking
+- `data_process/` — Preprocessing, LastFM/synthetic data generation, feature engineering
 
 ### Recommendation Flow (4-Level Fallback)
-1. **Redis cache** (`rec:user:{id}`, 30min TTL) → return cached
-2. **ML pipeline** — multi-recall (ItemCF + SASRec) → DeepFM ranking → return personalized
-3. **Offline precomputed** — `offline_recommendations` table in MySQL
-4. **Popularity cold-start** — global trending tracks
+1. Redis cache (`rec:user:{id}`, 30min TTL)
+2. ML pipeline — multi-recall (SASRec + ItemCF + tag + genre-popularity) → DeepFM ranking → MMR diversity rerank
+3. Offline precomputed (`offline_recommendations` table)
+4. Popularity cold-start
 
-### Shared Contracts (`shared_contracts/`)
-Pydantic models (`InteractionEvent`, `TrackFeatureVector`, `UserFeatureVector`) shared between backend and ML pipeline.
-
-### Frontend (`frontend/`)
-Vue 3 + Vite + Pinia. Views: Home, Discover, Login, Register, Favorites, Profile. Stores: auth, player, favorites.
-
-### Data (`data/`)
-- `data/models/` — Trained model artifacts (item_cf, sasrec, deepfm, svd subdirs)
-- `data/raw/` — Raw data files
-- `data/processed/` — Preprocessed data for training
+### User Frontend (`frontend/`)
+Vue 3 + Vite + Pinia. Views: Home, Discover, Login, Register, Favorites, Profile.
 
 ## Key Conventions
 
-- Python package manager is `uv` (not pip). Dependencies in `pyproject.toml` / `uv.lock`.
-- Backend uses `aiomysql` for async MySQL — all DB access is async.
-- Redis is used for: recommendation caching (`rec:user:{id}`) and user play sequences (`user:seq:{id}`, via LPUSH).
-- User sequence tracking: `interaction_service.py` pushes track IDs to Redis list; ML pipeline reads it for SASRec input.
-- Model artifacts are stored on disk under `data/models/` (not in a model registry).
-- Config uses `.env` for Docker defaults, `.env.local` for local overrides (higher priority).
-- The seeder (`scripts/seed_data.py`) fetches real track metadata from Deezer API (free, no auth). Needs proxy config (`HTTP_PROXY`) in Docker
-
-Other standard you must allow:
-
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
-
----
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+- Package manager: `uv`. Dependencies in `pyproject.toml` / `uv.lock`.
+- All DB access is async (`aiomysql`).
+- Redis keys: `rec:user:{id}` (recommendation cache), `user:seq:{id}` (SASRec sequence via LPUSH).
+- On login, `auth_service.py:warm_user_sequence()` loads MySQL history into Redis for SASRec.
+- Model artifacts on disk at `data/models/`. Genre mappings at `data/processed/track_genres.json`.
+- Config: `.env` for Docker defaults, `.env.local` for local overrides.
+- Training uses genre-balanced data from `track_genres.json` and `genre_tracks.json`.

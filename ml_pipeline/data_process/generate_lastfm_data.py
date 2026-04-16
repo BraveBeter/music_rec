@@ -2,8 +2,10 @@
 Generate realistic user interaction data based on Last.FM 1K dataset.
 
 Downloads Last.FM 1K listening data, extracts real user behavior patterns
-(genre preferences, activity levels), and maps them to our track catalog
-in MySQL. Produces ~800 users with ~200K+ interactions.
+with ACTUAL track names from the dataset. Inserts real tracks into the DB
+so interactions reference songs users truly listened to.
+
+Produces ~800 users with ~200K+ interactions and thousands of real tracks.
 
 Hardware target: Mac M5 16GB RAM
 Usage:
@@ -43,8 +45,6 @@ LASTFM_TSV = "userid-timestamp-artid-artname-traid-traname.tsv"
 
 # Target data size (Mac M5 16GB friendly)
 NUM_TARGET_USERS = 800
-MIN_INTERACTIONS_PER_USER = 50
-MAX_INTERACTIONS_PER_USER = 500
 MIN_MAPPED_PLAYS = 30  # minimum mapped artist plays for a valid profile
 
 COUNTRIES = [
@@ -53,8 +53,16 @@ COUNTRIES = [
     "Netherlands", "Sweden", "Russia", "Poland", "Finland", "Mexico", "Argentina",
 ]
 
+# Feature defaults per genre: (danceability_mean, energy_mean, tempo_mean)
+GENRE_FEATURE_DEFAULTS = {
+    "Rock": (0.6, 0.8, 130), "Pop": (0.7, 0.6, 120),
+    "Hip-Hop": (0.8, 0.7, 95), "Electronic": (0.7, 0.8, 128),
+    "Jazz": (0.4, 0.3, 120), "Classical": (0.2, 0.2, 100),
+    "R&B": (0.6, 0.5, 100), "Latin": (0.8, 0.7, 110),
+}
+
 # ---------------------------------------------------------------------------
-# Artist → Genre mapping  (8 genres matching our Deezer track catalog)
+# Artist → Genre mapping  (8 genres matching our track catalog)
 # Covers the most popular artists in the Last.FM 1K dataset (~2005-2009 era)
 # ---------------------------------------------------------------------------
 ARTIST_GENRE_MAP: dict[str, str] = {
@@ -268,7 +276,6 @@ def _download_lastfm_1k() -> str:
 
     import urllib.request
 
-    # Zenodo mirror (tar.gz) and original mirrors (zip)
     sources = [
         {
             "url": "https://zenodo.org/records/6090214/files/lastfm-dataset-1K.tar.gz",
@@ -309,15 +316,12 @@ def _download_lastfm_1k() -> str:
             logger.info("Extracting TSV from archive...")
             if source["format"] == "tar.gz":
                 with tarfile.open(archive_path, "r:gz") as tf:
-                    # Find the main listening-history TSV (contains 'artid' and 'traid')
-                    # NOT the smaller profile file
                     target = None
                     for member in tf.getmembers():
                         basename = os.path.basename(member.name)
                         if basename == LASTFM_TSV:
                             target = member
                             break
-                    # Fallback: pick the largest .tsv file
                     if target is None:
                         tsv_members = [m for m in tf.getmembers()
                                        if m.name.endswith(".tsv") and m.size > 100_000]
@@ -368,15 +372,25 @@ def _download_lastfm_1k() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Extract user genre profiles from TSV
+# Phase 2: Extract user profiles AND real tracks from TSV
 # ---------------------------------------------------------------------------
-def _extract_user_profiles(tsv_path: str) -> dict[str, dict[str, float]]:
+def _extract_data_from_tsv(tsv_path: str) -> tuple[
+    dict[str, dict[str, float]],              # user_profiles: userid -> genre -> weight
+    dict[str, list[str]],                      # user_tracks: userid -> [track_id, ...]
+    dict[str, tuple[str, str, str, int]],     # track_info: track_id -> (title, artist, genre, duration_ms)
+]:
     """
-    Parse Last.FM 1K TSV (chunked) and build normalised genre-preference
-    vectors for every user who has >= MIN_MAPPED_PLAYS mapped artist plays.
+    Parse Last.FM 1K TSV and extract:
+    1. User genre preference profiles (for user selection)
+    2. Per-user list of real track IDs they listened to
+    3. Full track info for all unique tracks
     """
-    logger.info("Extracting user genre profiles from Last.FM 1K...")
+    logger.info("Extracting user profiles and real tracks from Last.FM 1K...")
+
     user_genre_counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    user_track_listens: dict[str, list[str]] = defaultdict(list)
+    # key = (artname_lower, traname_lower) for dedup
+    unique_tracks: dict[tuple[str, str], tuple[str, str, str]] = {}  # (art_lower, tr_lower) -> (artname, traname, genre)
 
     chunk_size = 500_000
     total_rows = 0
@@ -385,28 +399,59 @@ def _extract_user_profiles(tsv_path: str) -> dict[str, dict[str, float]]:
         tsv_path,
         sep="\t",
         header=None,
-        usecols=[0, 3],
-        names=["userid", "artname"],
-        dtype={"userid": str, "artname": str},
+        usecols=[0, 3, 5],
+        names=["userid", "artname", "traname"],
+        dtype={"userid": str, "artname": str, "traname": str},
         chunksize=chunk_size,
         on_bad_lines="skip",
         engine="c",
     ):
         chunk["artname_lower"] = chunk["artname"].fillna("").str.lower().str.strip()
+        chunk["traname_lower"] = chunk["traname"].fillna("").str.lower().str.strip()
         chunk["genre"] = chunk["artname_lower"].map(ARTIST_GENRE_MAP)
 
-        mapped = chunk[chunk["genre"].notna()]
+        # Only keep rows where artist maps to a known genre
+        mapped = chunk[chunk["genre"].notna()].copy()
         if mapped.empty:
             total_rows += len(chunk)
             continue
 
+        # Build genre counts per user
         counts = mapped.groupby(["userid", "genre"]).size()
         for (userid, genre), count in counts.items():
             user_genre_counts[userid][genre] += count
 
+        # Build track info and user-track mapping
+        for _, row in mapped.iterrows():
+            art_lower = row["artname_lower"]
+            tr_lower = row["traname_lower"]
+            if not tr_lower or tr_lower == "":
+                continue
+            genre = row["genre"]
+            key = (art_lower, tr_lower)
+            if key not in unique_tracks:
+                unique_tracks[key] = (
+                    row["artname"] if pd.notna(row["artname"]) else art_lower,
+                    row["traname"] if pd.notna(row["traname"]) else tr_lower,
+                    genre,
+                )
+            track_id = f"LFM{hashlib.md5(f'{art_lower}|{tr_lower}'.encode()).hexdigest()[:10].upper()}"
+            user_track_listens[row["userid"]].append(track_id)
+
         total_rows += len(chunk)
         if total_rows % 2_000_000 < chunk_size:
-            logger.info(f"  Processed {total_rows:,} rows — {len(user_genre_counts)} users so far")
+            logger.info(f"  Processed {total_rows:,} rows — {len(user_genre_counts)} users, {len(unique_tracks)} unique tracks")
+
+    # Build track_info dict with duration
+    track_info: dict[str, tuple[str, str, str, int]] = {}
+    for (art_lower, tr_lower), (artname, traname, genre) in unique_tracks.items():
+        track_id = f"LFM{hashlib.md5(f'{art_lower}|{tr_lower}'.encode()).hexdigest()[:10].upper()}"
+        duration = random.randint(180000, 360000)
+        track_info[track_id] = (traname, artname, genre, duration)
+
+    # Deduplicate user track lists
+    for uid in user_track_listens:
+        user_track_listens[uid] = list(dict.fromkeys(user_track_listens[uid]))  # preserve order, remove dups
 
     # Normalise to preference weights
     user_profiles: dict[str, dict[str, float]] = {}
@@ -415,19 +460,30 @@ def _extract_user_profiles(tsv_path: str) -> dict[str, dict[str, float]]:
         if total >= MIN_MAPPED_PLAYS:
             user_profiles[userid] = {g: c / total for g, c in genres.items()}
 
-    logger.info(f"Extracted {len(user_profiles)} valid user genre profiles")
-    return user_profiles
+    logger.info(f"Extracted {len(user_profiles)} valid user profiles")
+    logger.info(f"Extracted {len(track_info)} unique real tracks from TSV")
+
+    # Genre distribution
+    genre_counts: dict[str, int] = defaultdict(int)
+    for _, (_, _, genre, _) in track_info.items():
+        genre_counts[genre] += 1
+    for g, c in sorted(genre_counts.items()):
+        logger.info(f"  {g}: {c} unique tracks")
+
+    return user_profiles, dict(user_track_listens), track_info
 
 
 # ---------------------------------------------------------------------------
 # Phase 3: Select users ensuring genre diversity
 # ---------------------------------------------------------------------------
 def _select_users(
-    profiles: dict[str, dict[str, float]], n: int,
+    profiles: dict[str, dict[str, float]],
+    user_tracks: dict[str, list[str]],
+    n: int,
 ) -> list[tuple[str, dict[str, float]]]:
-    """Sample n users, ensuring coverage of all 8 genres."""
+    """Sample n users, ensuring coverage of all 8 genres and each has real tracks."""
     all_genres = {"Pop", "Rock", "Hip-Hop", "Electronic", "Jazz", "Classical", "R&B", "Latin"}
-    items = list(profiles.items())
+    items = [(uid, prefs) for uid, prefs in profiles.items() if uid in user_tracks and len(user_tracks[uid]) >= 10]
     random.shuffle(items)
 
     selected: list[tuple[str, dict[str, float]]] = []
@@ -456,10 +512,10 @@ def _select_users(
 
 
 # ---------------------------------------------------------------------------
-# Phase 4: Generate interactions
+# Phase 4: Generate interaction metadata
 # ---------------------------------------------------------------------------
 def _interaction_metadata(liked: bool) -> dict:
-    """Generate interaction type & metadata (same logic as synthetic generator)."""
+    """Generate interaction type & metadata."""
     if liked:
         roll = random.random()
         if roll < 0.65:
@@ -510,44 +566,36 @@ def _interaction_metadata(liked: bool) -> dict:
             }
 
 
-def _generate_interactions_for_user(
+def _generate_interactions_from_real_listens(
+    track_ids: list[str],
+    track_info: dict[str, tuple[str, str, str, int]],
     genre_prefs: dict[str, float],
-    genre_tracks: dict[str, list[str]],
-    all_track_ids: list[str],
-    track_durations: dict[str, int],
 ) -> list[dict]:
-    """Generate a realistic set of interactions for one user."""
-    n_interactions = random.randint(MIN_INTERACTIONS_PER_USER, MAX_INTERACTIONS_PER_USER)
-    genres = list(genre_prefs.keys())
-    weights = [genre_prefs[g] for g in genres]
-
-    # Decide activity level based on preference concentration
-    # Users with concentrated taste interact more with preferred genres
-    max_weight = max(weights) if weights else 0.5
+    """
+    Generate interactions based on user's REAL listening history from TSV.
+    Uses actual tracks the user listened to, not random picks.
+    """
+    if not track_ids:
+        return []
 
     interactions = []
     base_time = datetime.now() - timedelta(days=180)
 
-    for j in range(n_interactions):
-        # Pick genre weighted by user preference
-        genre = random.choices(genres, weights=weights, k=1)[0]
-        candidates = genre_tracks.get(genre, [])
-        if not candidates:
-            candidates = all_track_ids
+    for track_id in track_ids:
+        info = track_info.get(track_id)
+        genre = info[2] if info else "Pop"
+        genre_weight = genre_prefs.get(genre, 0.1)
 
-        track_id = random.choice(candidates)
-
-        # Liked probability scales with genre preference weight
-        liked = random.random() < (0.3 + genre_prefs.get(genre, 0.1) * 0.7)
+        # Liked probability scales with genre preference
+        liked = random.random() < (0.3 + genre_weight * 0.7)
 
         meta = _interaction_metadata(liked)
 
-        duration_ms = track_durations.get(track_id, 30000)
+        duration_ms = info[3] if info else 30000
         play_duration = int(duration_ms * meta["duration_fraction"])
 
-        # Spread timestamps over last 180 days with realistic clustering
-        day_offset = random.betavariate(2, 5) * 180  # more recent = more likely
-        hour = int(random.betavariate(5, 3) * 24)  # peak evening hours
+        day_offset = random.betavariate(2, 5) * 180
+        hour = int(random.betavariate(5, 3) * 24)
         ts = base_time + timedelta(days=day_offset, hours=hour)
 
         interactions.append({
@@ -565,142 +613,97 @@ def _generate_interactions_for_user(
 # ---------------------------------------------------------------------------
 # Phase 5: MySQL operations
 # ---------------------------------------------------------------------------
-MIN_TRACKS_PER_GENRE = 100  # Ensure each genre has enough tracks
+async def _insert_real_tracks(session, track_info: dict[str, tuple[str, str, str, int]]) -> int:
+    """Insert all real tracks extracted from TSV into the database."""
+    logger.info(f"Inserting {len(track_info)} real tracks into database...")
 
+    # Pre-fetch existing LFM tracks to skip
+    result = await session.execute(
+        text("SELECT track_id FROM tracks WHERE track_id LIKE 'LFM%'")
+    )
+    existing_lfm = {row[0] for row in result.fetchall()}
 
-async def _ensure_genre_tracks(session, genre_tracks: dict[str, list[str]]) -> None:
-    """
-    Ensure each genre has at least MIN_TRACKS_PER_GENRE tracks.
-    Creates synthetic tracks from ARTIST_GENRE_MAP entries when a genre is underpopulated.
-    """
-    # Build reverse map: genre -> list of artists
-    genre_artists: dict[str, list[str]] = {}
-    for artist, genre in ARTIST_GENRE_MAP.items():
-        genre_artists.setdefault(genre, []).append(artist)
+    # Pre-fetch all tag IDs
+    result = await session.execute(text("SELECT tag_id, tag_name FROM tags"))
+    tag_ids: dict[str, int] = {row[1]: row[0] for row in result.fetchall()}
 
-    total_created = 0
-    for genre, artists in genre_artists.items():
-        existing = len(genre_tracks.get(genre, []))
-        needed = max(0, MIN_TRACKS_PER_GENRE - existing)
-        if needed <= 0:
+    # Ensure all needed tags exist
+    all_genres = set()
+    for _, (_, _, genre, _) in track_info.items():
+        all_genres.add(genre)
+    for genre in all_genres:
+        if genre not in tag_ids:
+            await session.execute(text("INSERT IGNORE INTO tags (tag_name) VALUES (:tag)"), {"tag": genre})
+    await session.flush()
+    result = await session.execute(text("SELECT tag_id, tag_name FROM tags"))
+    tag_ids = {row[1]: row[0] for row in result.fetchall()}
+
+    inserted = 0
+    batch_size = 500
+
+    for track_id, (title, artist, genre, duration) in track_info.items():
+        if track_id in existing_lfm:
             continue
 
-        # Ensure tag exists
-        await session.execute(text("INSERT IGNORE INTO tags (tag_name) VALUES (:tag)"), {"tag": genre})
-        tag_result = await session.execute(
-            text("SELECT tag_id FROM tags WHERE tag_name = :tag"), {"tag": genre}
-        )
-        tag_row = tag_result.first()
-        if not tag_row:
-            continue
-        tag_id = tag_row[0]
+        # Clean title/artist — truncate to reasonable length
+        clean_title = title[:200] if title else "Unknown"
+        clean_artist = artist[:200] if artist else "Unknown"
 
-        # Create synthetic tracks from artist names
-        created = 0
-        for i in range(needed):
-            artist = artists[i % len(artists)]
-            # Deterministic ID from artist + index to avoid duplicates
-            raw = f"LFM-{artist}-{i}"
-            track_id = f"LFM{hashlib.md5(raw.encode()).hexdigest()[:10].upper()}"
+        await session.execute(text("""
+            INSERT IGNORE INTO tracks
+            (track_id, title, artist_name, duration_ms, play_count, status)
+            VALUES (:track_id, :title, :artist, :duration, 0, 1)
+        """), {
+            "track_id": track_id, "title": clean_title,
+            "artist": clean_artist, "duration": duration,
+        })
 
-            # Skip if already exists
-            existing_check = await session.execute(
-                text("SELECT track_id FROM tracks WHERE track_id = :tid"), {"tid": track_id}
-            )
-            if existing_check.first():
-                continue
+        # Insert features based on genre
+        d, e, t = GENRE_FEATURE_DEFAULTS.get(genre, (0.5, 0.5, 120))
+        await session.execute(text("""
+            INSERT IGNORE INTO track_features
+            (track_id, danceability, energy, tempo, valence, acousticness)
+            VALUES (:track_id, :d, :e, :t, :v, :a)
+        """), {
+            "track_id": track_id,
+            "d": round(random.gauss(d, 0.15), 3),
+            "e": round(random.gauss(e, 0.15), 3),
+            "t": round(random.gauss(t, 20), 1),
+            "v": round(random.uniform(0.1, 0.9), 3),
+            "a": round(random.uniform(0.01, 0.6), 3),
+        })
 
-            duration = random.randint(180000, 360000)  # 3-6 min
-            title_variants = ["Greatest Hits", "Best Of", "Anthology", "Collection",
-                              "Essential", "Classics", "Live", "Acoustic", "Deluxe",
-                              "Original", "Remastered", "Sessions", "Tribute"]
-            title = f"{artist.title()} - {random.choice(title_variants)} Vol.{i // len(artists) + 1}"
-
+        # Insert tag association
+        tag_id = tag_ids.get(genre)
+        if tag_id:
             await session.execute(text("""
-                INSERT IGNORE INTO tracks
-                (track_id, title, artist_name, duration_ms, play_count, status)
-                VALUES (:track_id, :title, :artist, :duration, 0, 1)
-            """), {
-                "track_id": track_id, "title": title,
-                "artist": artist.title(), "duration": duration,
-            })
+                INSERT IGNORE INTO track_tags (track_id, tag_id) VALUES (:tid, :tagid)
+            """), {"tid": track_id, "tagid": tag_id})
 
-            # Random acoustic features based on genre tendencies
-            feature_defaults = {
-                "Rock": (0.6, 0.8, 130), "Pop": (0.7, 0.6, 120),
-                "Hip-Hop": (0.8, 0.7, 95), "Electronic": (0.7, 0.8, 128),
-                "Jazz": (0.4, 0.3, 120), "Classical": (0.2, 0.2, 100),
-                "R&B": (0.6, 0.5, 100), "Latin": (0.8, 0.7, 110),
-            }
-            d, e, t = feature_defaults.get(genre, (0.5, 0.5, 120))
-            await session.execute(text("""
-                INSERT IGNORE INTO track_features
-                (track_id, danceability, energy, tempo, valence, acousticness)
-                VALUES (:track_id, :danceability, :energy, :tempo, :valence, :acousticness)
-            """), {
-                "track_id": track_id,
-                "danceability": round(random.gauss(d, 0.15), 3),
-                "energy": round(random.gauss(e, 0.15), 3),
-                "tempo": round(random.gauss(t, 20), 1),
-                "valence": round(random.uniform(0.1, 0.9), 3),
-                "acousticness": round(random.uniform(0.01, 0.6), 3),
-            })
+        inserted += 1
+        if inserted % batch_size == 0:
+            await session.flush()
+            logger.info(f"  Inserted {inserted} tracks...")
 
-            await session.execute(text("""
-                INSERT IGNORE INTO track_tags (track_id, tag_id) VALUES (:track_id, :tag_id)
-            """), {"track_id": track_id, "tag_id": tag_id})
-
-            genre_tracks.setdefault(genre, []).append(track_id)
-            created += 1
-
-        total_created += created
-        if created > 0:
-            logger.info(f"  Created {created} tracks for genre '{genre}' (had {existing})")
-
-    if total_created > 0:
-        await session.flush()
-        logger.info(f"Total synthetic tracks created: {total_created}")
-
-
-async def _load_tracks_from_db(session) -> tuple[dict, dict, list]:
-    """Load track-genre mapping from MySQL."""
-    result = await session.execute(text("""
-        SELECT t.track_id, t.duration_ms, tg.tag_name
-        FROM tracks t
-        LEFT JOIN track_tags tt ON t.track_id = tt.track_id
-        LEFT JOIN tags tg ON tt.tag_id = tg.tag_id
-        WHERE t.status = 1
-    """))
-    rows = result.fetchall()
-
-    genre_tracks: dict[str, list[str]] = {}
-    track_durations: dict[str, int] = {}
-    for track_id, duration_ms, tag_name in rows:
-        if track_id not in track_durations:
-            track_durations[track_id] = duration_ms or 30000
-        if tag_name:
-            genre_tracks.setdefault(tag_name, []).append(track_id)
-
-    all_track_ids = list(track_durations.keys())
-    return genre_tracks, track_durations, all_track_ids
+    await session.flush()
+    logger.info(f"Inserted {inserted} new real tracks (skipped {len(track_info) - inserted + len(existing_lfm)} existing)")
+    return inserted
 
 
 async def _clear_old_data(session):
-    """Remove old synthetic / lastfm users and their interactions."""
-    for prefix in ("synth_user_%", "lastfm_user_%"):
+    """Remove old lastfm users and their interactions."""
+    for prefix in ("lastfm_user_%",):
         result = await session.execute(
             text("SELECT user_id FROM users WHERE username LIKE :prefix"),
             {"prefix": prefix},
         )
         user_ids = [row[0] for row in result.fetchall()]
         if user_ids:
-            # Delete interactions
             for uid in user_ids:
                 await session.execute(
                     text("DELETE FROM user_interactions WHERE user_id = :uid"),
                     {"uid": uid},
                 )
-            # Delete users
             await session.execute(
                 text("DELETE FROM users WHERE username LIKE :prefix"),
                 {"prefix": prefix},
@@ -736,59 +739,42 @@ async def _insert_user(session, idx: int, age: int, gender: int, country: str) -
 # ---------------------------------------------------------------------------
 async def generate():
     logger.info("=" * 60)
-    logger.info("Last.FM 1K Data Generator")
-    logger.info(f"Target: {NUM_TARGET_USERS} users, ~200K+ interactions")
+    logger.info("Last.FM 1K Data Generator (Real Tracks)")
+    logger.info(f"Target: {NUM_TARGET_USERS} users with real listening history")
     logger.info("=" * 60)
 
     # 1. Download / cache
     tsv_path = _download_lastfm_1k()
 
-    # 2. Extract user profiles
-    profiles = _extract_user_profiles(tsv_path)
-    if not profiles:
+    # 2. Extract user profiles AND real tracks from TSV
+    user_profiles, user_tracks, track_info = _extract_data_from_tsv(tsv_path)
+    if not user_profiles:
         logger.error("No valid user profiles extracted. Check ARTIST_GENRE_MAP coverage.")
         return
 
-    # 3. Select users with genre diversity
-    selected = _select_users(profiles, NUM_TARGET_USERS)
+    # 3. Select users with genre diversity (only those with real tracks)
+    selected = _select_users(user_profiles, user_tracks, NUM_TARGET_USERS)
 
-    # 4. Connect to DB and load tracks
+    # 4. Connect to DB
     engine = create_async_engine(DATABASE_URL, echo=False)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with session_factory() as session:
-        genre_tracks, track_durations, all_track_ids = await _load_tracks_from_db(session)
-        if not all_track_ids:
-            logger.error("No tracks found in database. Run seed_data.py first.")
-            await engine.dispose()
-            return
+        # 5. Insert all real tracks into DB first
+        logger.info(f"Total unique tracks to ensure in DB: {len(track_info)}")
+        await _insert_real_tracks(session, track_info)
+        await session.commit()
 
-        logger.info(f"Track catalog: {len(all_track_ids)} tracks across {len(genre_tracks)} genres")
-        for g, tracks in sorted(genre_tracks.items()):
-            logger.info(f"  {g}: {len(tracks)} tracks")
-
-        # Ensure each genre has enough tracks for realistic interactions
-        logger.info("Ensuring minimum track coverage per genre...")
-        await _ensure_genre_tracks(session, genre_tracks)
-
-        # Reload after expansion
-        all_track_ids = list(track_durations.keys())
-        for tids in genre_tracks.values():
-            for tid in tids:
-                if tid not in track_durations:
-                    track_durations[tid] = 30000  # default for synthetic tracks
-        logger.info(f"Expanded catalog: {len(all_track_ids)} tracks total")
-
-        # 5. Clear old data
-        logger.info("Clearing old synthetic / lastfm data...")
+        # 6. Clear old lastfm users
+        logger.info("Clearing old lastfm user data...")
         await _clear_old_data(session)
         await session.commit()
 
-        # 6. Generate and insert users + interactions
+        # 7. Generate and insert users + interactions based on real listens
         total_interactions = 0
         batch_interactions = []
 
-        logger.info(f"Generating {len(selected)} users with realistic interactions...")
+        logger.info(f"Generating {len(selected)} users with real listening interactions...")
         for i, (lfm_uid, prefs) in enumerate(selected):
             age = random.choice([
                 random.randint(16, 22),
@@ -802,8 +788,13 @@ async def generate():
             if not user_id:
                 continue
 
-            interactions = _generate_interactions_for_user(
-                prefs, genre_tracks, all_track_ids, track_durations,
+            # Use this user's REAL tracks from TSV
+            real_tracks = user_tracks.get(lfm_uid, [])
+            if not real_tracks:
+                continue
+
+            interactions = _generate_interactions_from_real_listens(
+                real_tracks, track_info, prefs,
             )
 
             for ia in interactions:
@@ -859,6 +850,7 @@ async def generate():
         await session.commit()
         logger.info("=" * 60)
         logger.info(f"Generated {len(selected)} users, {total_interactions:,} interactions")
+        logger.info(f"Total real tracks in DB: {len(track_info)}")
         logger.info("=" * 60)
 
     await engine.dispose()

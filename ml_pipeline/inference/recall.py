@@ -320,6 +320,7 @@ def multi_recall(
                 candidates[track_id] = (existing_score + weighted, candidates[track_id][1])
 
     # 3. Popularity fallback (genre-aware)
+    pop_w = 0.3
     if popular_tracks:
         user_liked_ids = {tid for tid in candidates} if candidates else None
         pop_results = _normalize_scores(

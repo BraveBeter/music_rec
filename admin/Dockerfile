@@ -11,6 +11,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Code is mounted via volumes at runtime
-ENV PYTHONPATH=/app:/opt/common
+ENV PYTHONPATH=/app:/opt
 
 CMD ["uvicorn", "admin.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

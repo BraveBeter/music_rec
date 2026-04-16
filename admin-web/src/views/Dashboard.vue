@@ -51,7 +51,8 @@
             :disabled="step.loading"
             :class="['btn-train', step.status]"
           >
-            <template v-if="step.loading">执行中...</template>
+            <template v-if="step.loading">训练中...</template>
+            <template v-else-if="step.status === 'running'">训练中...</template>
             <template v-else-if="step.status === 'done'">完成</template>
             <template v-else>执行</template>
           </button>
@@ -164,17 +165,49 @@ async function doTrain(action: string) {
   const step = trainingSteps.find(s => s.action === action)
   if (!step) return
   step.loading = true
-  step.status = ''
+  step.status = 'running'
   try {
     await actionMap[action]()
-    step.status = 'done'
-    refreshStatus()
+    // API returns immediately after starting subprocess — show "已启动"
+    step.status = 'running'
+    // Poll status until training completes
+    pollTaskStatus(action, step)
   } catch (e: any) {
     step.status = 'error'
     alert(e.response?.data?.detail || '训练失败')
-  } finally {
     step.loading = false
   }
+}
+
+async function pollTaskStatus(action: string, step: any) {
+  // Poll /admin/status to check if model artifact appears
+  const maxPolls = 120 // max 10 minutes at 5s interval
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise(r => setTimeout(r, 5000))
+    try {
+      const { data } = await getSystemStatus()
+      const modelKey = {
+        preprocess: null,
+        baseline: 'item_cf',
+        sasrec: 'sasrec',
+        deepfm: 'deepfm',
+      }[action]
+      if (modelKey === null) {
+        // Preprocess — just wait 30s then mark done
+        if (i >= 6) { step.status = 'done'; step.loading = false; refreshStatus(); return }
+        continue
+      }
+      if (data.models && data.models[modelKey]) {
+        step.status = 'done'
+        step.loading = false
+        refreshStatus()
+        return
+      }
+    } catch { /* ignore poll errors */ }
+  }
+  // Timeout
+  step.status = ''
+  step.loading = false
 }
 
 const trainAllLoading = ref(false)
@@ -183,19 +216,23 @@ async function trainAll() {
   trainAllLoading.value = true
   for (const step of trainingSteps) {
     step.status = ''
-  }
-  for (const step of trainingSteps) {
     step.loading = true
+  }
+  // Launch all training tasks in parallel
+  const promises = trainingSteps.map(async (step) => {
     try {
       await actionMap[step.action]()
-      step.status = 'done'
+      step.status = 'running'
+      // Poll for completion
+      await new Promise<void>((resolve) => {
+        pollTaskStatus(step.action, step).then(resolve)
+      })
     } catch {
       step.status = 'error'
-      break
-    } finally {
       step.loading = false
     }
-  }
+  })
+  await Promise.all(promises)
   trainAllLoading.value = false
   refreshStatus()
 }
@@ -203,9 +240,9 @@ async function trainAll() {
 
 <style scoped>
 .dashboard {
-  max-width: 960px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 1.5rem 2.5rem;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: #e0e0e0;
   background: #1a1a2e;
@@ -331,6 +368,7 @@ header h1 { font-size: 1.3rem; color: #e94560; margin: 0; }
 .btn-train:hover:not(:disabled) { background: #1a4a8a; }
 .btn-train:disabled { opacity: 0.6; cursor: not-allowed; }
 .btn-train.done { border-color: #4ade80; color: #4ade80; }
+.btn-train.running { border-color: #60a5fa; color: #60a5fa; }
 .btn-train.error { border-color: #ff6b6b; color: #ff6b6b; }
 
 .train-all { margin-top: 1rem; text-align: center; }

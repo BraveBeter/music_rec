@@ -31,11 +31,16 @@ async def generate_lastfm(
     )
     _running_tasks["generate_lastfm"] = process
 
-    async def _cleanup():
+    async def _log_output():
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            logger.info(f"[lastfm] {line.decode().rstrip()}")
         await process.wait()
         _running_tasks.pop("generate_lastfm", None)
 
-    asyncio.create_task(_cleanup())
+    asyncio.create_task(_log_output())
     return {"status": "started", "pid": process.pid}
 
 
@@ -55,9 +60,14 @@ async def generate_synthetic(
     )
     _running_tasks["generate_synthetic"] = process
 
-    async def _cleanup():
+    async def _log_output():
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            logger.info(f"[synthetic] {line.decode().rstrip()}")
         await process.wait()
         _running_tasks.pop("generate_synthetic", None)
 
-    asyncio.create_task(_cleanup())
+    asyncio.create_task(_log_output())
     return {"status": "started", "pid": process.pid}

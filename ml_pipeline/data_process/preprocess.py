@@ -196,6 +196,99 @@ def _build_user_sequences(interactions: pd.DataFrame, max_len: int = 50) -> dict
     return sequences
 
 
+def _build_deepfm_features(
+    interactions: pd.DataFrame,
+    tracks: pd.DataFrame,
+    users: pd.DataFrame,
+    track_tags: pd.DataFrame,
+    user2idx: dict,
+    track2idx: dict,
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    test: pd.DataFrame,
+):
+    """Build DeepFM-specific feature data and save to disk."""
+    import json
+
+    # Build track feature lookup
+    track_feat = tracks.set_index("track_id")
+    # Build user feature lookup
+    user_feat = users.set_index("user_id")
+
+    # Build genre mapping per track (one-hot index)
+    genres = sorted(track_tags["tag_name"].unique()) if not track_tags.empty else []
+    genre2idx = {g: i for i, g in enumerate(genres)}
+    track_genre_idx = track_tags.groupby("track_id")["tag_name"].first().map(genre2idx).to_dict()
+
+    # Sparse features: user_idx, track_idx, genre_idx
+    # Dense features: play_duration_norm, completion_rate, danceability, energy, tempo, valence, acousticness
+    sparse_features = ["user_idx", "track_idx", "genre_idx"]
+    dense_features = ["play_duration_norm", "completion_rate", "danceability", "energy", "tempo", "valence", "acousticness"]
+
+    sparse_dims = {
+        "user_idx": len(user2idx),
+        "track_idx": len(track2idx),
+        "genre_idx": max(len(genres), 1),
+    }
+
+    def _enrich_df(df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        # Map genre index
+        df["genre_idx"] = df["track_id"].map(track_genre_idx).fillna(0).astype(int)
+        # Normalize play_duration
+        if "play_duration" in df.columns:
+            max_dur = df["play_duration"].max() or 1
+            df["play_duration_norm"] = df["play_duration"].fillna(0) / max_dur
+        else:
+            df["play_duration_norm"] = 0.0
+        # Fill completion_rate
+        if "completion_rate" in df.columns:
+            df["completion_rate"] = df["completion_rate"].fillna(0.0)
+        else:
+            df["completion_rate"] = 0.0
+        # Track features
+        for feat in ["danceability", "energy", "tempo", "valence", "acousticness"]:
+            if feat in df.columns:
+                df[feat] = df[feat].fillna(0.0).astype(float)
+            else:
+                # Lookup from track features
+                feat_vals = df["track_id"].map(
+                    track_feat[feat] if feat in track_feat.columns else pd.Series(dtype=float)
+                ).fillna(0.0)
+                df[feat] = feat_vals
+        # Ensure user_idx and track_idx
+        if "user_idx" not in df.columns:
+            df["user_idx"] = df["user_id"].map(user2idx).fillna(0).astype(int)
+        if "track_idx" not in df.columns:
+            df["track_idx"] = df["track_id"].map(track2idx).fillna(0).astype(int)
+
+        # Select only needed columns
+        cols = sparse_features + dense_features + ["label"]
+        for c in cols:
+            if c not in df.columns:
+                df[c] = 0
+        return df[cols]
+
+    train_deepfm = _enrich_df(train)
+    val_deepfm = _enrich_df(val)
+    test_deepfm = _enrich_df(test)
+
+    train_deepfm.to_parquet(os.path.join(PROCESSED_DATA_DIR, "train_deepfm.parquet"), index=False)
+    val_deepfm.to_parquet(os.path.join(PROCESSED_DATA_DIR, "val_deepfm.parquet"), index=False)
+    test_deepfm.to_parquet(os.path.join(PROCESSED_DATA_DIR, "test_deepfm.parquet"), index=False)
+
+    feature_meta = {
+        "sparse_features": sparse_features,
+        "dense_features": dense_features,
+        "sparse_dims": sparse_dims,
+    }
+    with open(os.path.join(PROCESSED_DATA_DIR, "feature_meta.json"), "w") as f:
+        json.dump(feature_meta, f, indent=2)
+
+    logger.info(f"  DeepFM features: {len(sparse_features)} sparse, {len(dense_features)} dense")
+    logger.info(f"  DeepFM data: train={len(train_deepfm)}, val={len(val_deepfm)}, test={len(test_deepfm)}")
+
+
 async def run_preprocessing():
     """Main preprocessing pipeline."""
     logger.info("=" * 60)
@@ -203,7 +296,7 @@ async def run_preprocessing():
     logger.info("=" * 60)
 
     # 1. Load data
-    logger.info("[1/6] Loading data from database...")
+    logger.info("[1/7] Loading data from database...")
     interactions, tracks, users, track_tags = await _load_from_db()
     logger.info(f"  Loaded: {len(interactions)} interactions, {len(tracks)} tracks, {len(users)} users")
 
@@ -212,29 +305,29 @@ async def run_preprocessing():
         return
 
     # 2. Clean
-    logger.info("[2/6] Cleaning interactions...")
+    logger.info("[2/7] Cleaning interactions...")
     interactions = _clean_interactions(interactions)
 
     # 3. Generate labels
-    logger.info("[3/6] Generating implicit labels...")
+    logger.info("[3/7] Generating implicit labels...")
     interactions = _generate_implicit_labels(interactions)
 
     # 4. Build ID mappings
-    logger.info("[4/6] Building ID mappings...")
+    logger.info("[4/7] Building ID mappings...")
     user2idx, track2idx = _build_id_mappings(interactions)
     interactions["user_idx"] = interactions["user_id"].map(user2idx)
     interactions["track_idx"] = interactions["track_id"].map(track2idx)
 
     # 5. Split
-    logger.info("[5/6] Temporal train/val/test split...")
+    logger.info("[5/7] Temporal train/val/test split...")
     train, val, test = _temporal_split(interactions)
 
     # 6. Build sequences
-    logger.info("[6/6] Building user sequences for SASRec...")
+    logger.info("[6/7] Building user sequences for SASRec...")
     sequences = _build_user_sequences(interactions)
 
     # Save everything
-    logger.info("💾 Saving processed data...")
+    logger.info("[7/7] Saving processed data...")
     os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
 
     # Convert datetime columns to string for parquet compatibility
@@ -272,6 +365,10 @@ async def run_preprocessing():
         with open(os.path.join(PROCESSED_DATA_DIR, "genre_tracks.json"), "w") as f:
             json.dump(genre_tracks_map, f)
         logger.info(f"  Saved track-genre mappings: {len(track_genres_map)} tracks, {len(genre_tracks_map)} genres")
+
+    # 7. Build DeepFM features
+    logger.info("[7/7] Building DeepFM feature data...")
+    _build_deepfm_features(interactions, tracks, users, track_tags, user2idx, track2idx, train, val, test)
 
     # Stats summary
     logger.info("=" * 60)

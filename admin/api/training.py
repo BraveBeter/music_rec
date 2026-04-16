@@ -1,6 +1,5 @@
 """Admin training — trigger preprocessing and model training."""
 import asyncio
-import os
 import logging
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,12 +25,17 @@ async def _run_pipeline(name: str, module: str) -> dict:
     )
     _running[name] = process
 
-    async def _cleanup():
+    async def _log_output():
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            logger.info(f"[{name}] {line.decode().rstrip()}")
         await process.wait()
         _running.pop(name, None)
         logger.info(f"Training task '{name}' completed")
 
-    asyncio.create_task(_cleanup())
+    asyncio.create_task(_log_output())
     return {"status": "started", "name": name, "pid": process.pid}
 
 

@@ -115,27 +115,6 @@ services:
       musicrec_redis:
         condition: service_healthy
 
-  # ---- Data Seeder (admin account only) ----
-  musicrec_seeder:
-    build:
-      context: .
-      dockerfile: app/Dockerfile
-    container_name: musicrec_seeder
-    hostname: musicrec_seeder
-    env_file: .env
-    environment:
-      DATABASE_URL: mysql+aiomysql://${MYSQL_USER}:${MYSQL_PASSWORD}@musicrec_mysql:3306/${MYSQL_DATABASE}
-    volumes:
-      - ./common:/opt/common
-      - ./scripts:/app/scripts
-    networks:
-      - musicrec_net
-    depends_on:
-      musicrec_mysql:
-        condition: service_healthy
-    command: >
-      bash -c "python scripts/init_admin.py"
-
   # ---- Vue3 User Frontend (dev) ----
   musicrec_frontend:
     build:

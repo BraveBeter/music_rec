@@ -37,18 +37,10 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific generated files
-data/models/**/*.pt
-data/models/**/*.npy
-data/models/**/*.npz
-data/models/**/*.onnx
-data/processed/*.parquet
-data/processed/*.json
-data/raw
+data/
 
-# Keep directory structures
-!data/models/**/meta.json
-!data/models/**/.gitkeep
-!data/processed/.gitkeep
+# Frontend build cache
+*.tsbuildinfo
 
 # Temporary AI / Debug files
 tmp_tree.txt

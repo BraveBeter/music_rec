@@ -1,7 +1,0 @@
-{
-  "model": "DeepFM",
-  "test_auc": 0.5532347458054114,
-  "test_logloss": 0.692379940056567,
-  "train_loss_final": 0.3101319716135962,
-  "val_loss_final": 0.7141353713409133
-}

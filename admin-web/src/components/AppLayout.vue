@@ -154,7 +154,8 @@ const auth = useAuthStore()
 .main-content {
   flex: 1;
   margin-left: 220px;
-  min-height: 100vh;
+  height: 100vh;
+  overflow-y: auto;
   background: #1a1a2e;
 }
 

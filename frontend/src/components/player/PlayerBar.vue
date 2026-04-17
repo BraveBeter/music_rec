@@ -43,7 +43,12 @@ const coverUrl = computed(() =>
         </div>
         <div class="track-meta">
           <div class="track-title">{{ trackTitle }}</div>
-          <div class="track-artist">{{ player.currentTrack ? artistName : '点击任意歌曲开始播放' }}</div>
+          <router-link
+            v-if="player.currentTrack && artistName"
+            :to="`/artist/${encodeURIComponent(artistName)}`"
+            class="track-artist"
+          >{{ artistName }}</router-link>
+          <div v-else class="track-artist">{{ player.currentTrack ? artistName : '点击任意歌曲开始播放' }}</div>
         </div>
       </div>
 
@@ -214,6 +219,12 @@ button:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.track-artist:hover {
+  color: var(--color-accent-primary);
 }
 
 .player-controls {

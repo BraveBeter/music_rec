@@ -117,7 +117,13 @@ onMounted(async () => {
               <img :src="group.source.cover_url || coverFallback" :alt="group.source.title" class="header-cover" />
               <div class="header-info">
                 <div class="header-title">{{ group.source.title }}</div>
-                <div class="header-artist">{{ group.source.artist_name || 'Unknown' }}</div>
+                <router-link
+                  v-if="group.source.artist_name"
+                  :to="`/artist/${encodeURIComponent(group.source.artist_name)}`"
+                  class="header-artist header-artist-link"
+                  @click.stop
+                >{{ group.source.artist_name }}</router-link>
+                <div v-else class="header-artist">Unknown</div>
               </div>
             </div>
             <!-- Similar tracks -->
@@ -131,7 +137,13 @@ onMounted(async () => {
                 <img :src="track.cover_url || coverFallback" :alt="track.title" class="cell-cover" />
                 <div class="cell-info">
                   <div class="cell-title">{{ track.title }}</div>
-                  <div class="cell-artist">{{ track.artist_name || 'Unknown' }}</div>
+                  <router-link
+                    v-if="track.artist_name"
+                    :to="`/artist/${encodeURIComponent(track.artist_name)}`"
+                    class="cell-artist cell-artist-link"
+                    @click.stop
+                  >{{ track.artist_name }}</router-link>
+                  <div v-else class="cell-artist">Unknown</div>
                 </div>
               </div>
             </div>
@@ -331,6 +343,15 @@ onMounted(async () => {
   line-height: 1.3;
 }
 
+.header-artist-link {
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.header-artist-link:hover {
+  color: var(--color-accent-primary);
+}
+
 /* Similar track cells */
 .similar-col-tracks {
   display: flex;
@@ -386,6 +407,15 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
+}
+
+.cell-artist-link {
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.cell-artist-link:hover {
+  color: var(--color-accent-primary);
 }
 
 @media (max-width: 768px) {

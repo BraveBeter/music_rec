@@ -171,7 +171,13 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
                 <img :src="track.cover_url || coverFallback" :alt="track.title" class="cell-cover" />
                 <div class="cell-info">
                   <div class="cell-title">{{ track.title }}</div>
-                  <div class="cell-artist">{{ track.artist_name || 'Unknown' }}</div>
+                  <router-link
+                    v-if="track.artist_name"
+                    :to="`/artist/${encodeURIComponent(track.artist_name)}`"
+                    class="cell-artist cell-artist-link"
+                    @click.stop
+                  >{{ track.artist_name }}</router-link>
+                  <div v-else class="cell-artist">Unknown</div>
                 </div>
               </div>
             </div>
@@ -211,7 +217,13 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
                 <img :src="track.cover_url || coverFallback" :alt="track.title" class="cell-cover" />
                 <div class="cell-info">
                   <div class="cell-title">{{ track.title }}</div>
-                  <div class="cell-artist">{{ track.artist_name || 'Unknown' }}</div>
+                  <router-link
+                    v-if="track.artist_name"
+                    :to="`/artist/${encodeURIComponent(track.artist_name)}`"
+                    class="cell-artist cell-artist-link"
+                    @click.stop
+                  >{{ track.artist_name }}</router-link>
+                  <div v-else class="cell-artist">Unknown</div>
                 </div>
               </div>
             </div>
@@ -455,6 +467,15 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
+}
+
+.cell-artist-link {
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.cell-artist-link:hover {
+  color: var(--color-accent-primary);
 }
 
 /* ── Ranking badge ── */

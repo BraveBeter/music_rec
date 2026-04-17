@@ -213,7 +213,8 @@ def main(task_id: str | None = None):
 
     if not _check_data():
         if tracker:
-            tracker.__exit__(None, None, None)
+            _log("Error: missing preprocessed data files")
+            tracker.__exit__(RuntimeError, RuntimeError("Missing preprocessed data files"), None)
         sys.exit(1)
 
     _log("Loading preprocessed data...")

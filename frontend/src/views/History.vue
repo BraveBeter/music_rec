@@ -112,7 +112,13 @@ onMounted(() => {
         />
         <div class="history-info">
           <div class="history-title">{{ item.title }}</div>
-          <div class="history-artist">{{ item.artist_name || 'Unknown Artist' }}</div>
+          <router-link
+            v-if="item.artist_name"
+            :to="`/artist/${encodeURIComponent(item.artist_name)}`"
+            class="history-artist history-artist-link"
+            @click.stop
+          >{{ item.artist_name }}</router-link>
+          <div v-else class="history-artist">Unknown Artist</div>
         </div>
         <div class="history-meta">
           <span class="history-time">{{ formatTimestamp(item.created_at) }}</span>
@@ -242,6 +248,15 @@ onMounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.history-artist-link {
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.history-artist-link:hover {
+  color: var(--color-accent-primary);
 }
 
 .history-meta {

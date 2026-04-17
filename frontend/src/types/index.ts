@@ -70,3 +70,17 @@ export interface GenreTracksItem {
 export interface GenreTracksResponse {
   genres: GenreTracksItem[]
 }
+
+// Playback history
+export interface PlaybackHistoryItem {
+  interaction_id: number
+  track_id: string
+  title: string
+  artist_name: string | null
+  cover_url: string | null
+  duration_ms: number | null
+  interaction_type: number
+  play_duration: number | null
+  completion_rate: number | null
+  created_at: string
+}

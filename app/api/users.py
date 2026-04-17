@@ -1,6 +1,6 @@
 """User endpoints."""
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -9,7 +9,8 @@ from app.core.dependencies import get_current_user
 from common.models.user import User
 from common.models.user_favorite import UserFavorite
 from common.models.interaction import UserInteraction
-from app.schemas.user import UserProfile, UpdateProfileRequest
+from common.models.track import Track
+from app.schemas.user import UserProfile, UpdateProfileRequest, PlaybackHistoryItem
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -86,3 +87,36 @@ async def get_favorite_ids(
     )
     ids = [row[0] for row in result.all()]
     return {"track_ids": ids}
+
+
+@router.get("/me/history", response_model=list[PlaybackHistoryItem])
+async def get_playback_history(
+    limit: int = Query(500, ge=1, le=500, description="Maximum 500 records"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get user's playback history with track details."""
+    result = await db.execute(
+        select(UserInteraction, Track)
+        .join(Track, UserInteraction.track_id == Track.track_id)
+        .where(UserInteraction.user_id == current_user.user_id)
+        .where(UserInteraction.interaction_type == 1)  # play events only
+        .order_by(UserInteraction.created_at.desc())
+        .limit(limit)
+    )
+
+    history = []
+    for interaction, track in result.all():
+        history.append(PlaybackHistoryItem(
+            interaction_id=interaction.interaction_id,
+            track_id=interaction.track_id,
+            title=track.title,
+            artist_name=track.artist_name,
+            cover_url=track.cover_url,
+            duration_ms=track.duration_ms,
+            interaction_type=interaction.interaction_type,
+            play_duration=interaction.play_duration,
+            completion_rate=interaction.completion_rate,
+            created_at=str(interaction.created_at),
+        ))
+    return history

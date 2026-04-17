@@ -472,9 +472,10 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
 .cell-artist-link {
   text-decoration: none;
   transition: color var(--transition-fast);
+  color: var(--color-text-muted);
 }
 
-.cell-artist-link:hover {
+.cell-artist.cell-artist-link:hover {
   color: var(--color-accent-primary);
 }
 

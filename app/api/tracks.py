@@ -6,8 +6,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.schemas.track import TrackResponse, TrackListResponse
-from app.services.track_service import get_tracks, get_track_by_id, get_popular_tracks, get_diverse_popular_tracks
+from app.schemas.track import TrackResponse, TrackListResponse, GenreTracksResponse, GenreTracksItem
+from app.services.track_service import get_tracks, get_track_by_id, get_popular_tracks, get_diverse_popular_tracks, get_genre_random, get_genre_ranking
 
 router = APIRouter(prefix="/tracks", tags=["Tracks"])
 logger = logging.getLogger("music_rec")
@@ -46,6 +46,36 @@ async def popular_tracks(
     """Get popular tracks with genre diversity."""
     tracks = await get_diverse_popular_tracks(db, limit=limit, max_per_genre=3)
     return [TrackResponse.model_validate(t) for t in tracks]
+
+
+@router.get("/genre-random", response_model=GenreTracksResponse)
+async def genre_random_tracks(
+    per_genre: int = Query(5, ge=1, le=20),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get random tracks per genre."""
+    genre_data = await get_genre_random(db, per_genre=per_genre)
+    return GenreTracksResponse(
+        genres=[
+            GenreTracksItem(genre=name, tracks=[TrackResponse.model_validate(t) for t in tracks])
+            for name, tracks in genre_data
+        ]
+    )
+
+
+@router.get("/genre-ranking", response_model=GenreTracksResponse)
+async def genre_ranking_tracks(
+    top_k: int = Query(10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get top tracks per genre ranked by play count."""
+    genre_data = await get_genre_ranking(db, top_k=top_k)
+    return GenreTracksResponse(
+        genres=[
+            GenreTracksItem(genre=name, tracks=[TrackResponse.model_validate(t) for t in tracks])
+            for name, tracks in genre_data
+        ]
+    )
 
 
 @router.get("/{track_id}/preview")

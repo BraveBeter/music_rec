@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, text
 
 from common.models.track import Track
+from common.models.tag import Tag, TrackTag
 
 
 async def get_tracks(
@@ -104,3 +105,81 @@ async def get_diverse_popular_tracks(
         selected.extend(tracks)
     selected.sort(key=lambda t: t.play_count, reverse=True)
     return selected[:limit]
+
+
+async def get_genre_random(
+    db: AsyncSession,
+    per_genre: int = 5,
+) -> list[tuple[str, list[Track]]]:
+    """Get random tracks per genre. Returns list of (genre_name, tracks)."""
+    # Get all genres
+    genre_result = await db.execute(select(Tag).order_by(Tag.tag_name))
+    genres = genre_result.scalars().all()
+
+    result: list[tuple[str, list[Track]]] = []
+    for genre in genres:
+        # Random tracks for this genre
+        stmt = (
+            select(Track)
+            .join(TrackTag, Track.track_id == TrackTag.track_id)
+            .where(TrackTag.tag_id == genre.tag_id, Track.status == 1)
+            .order_by(func.rand())
+            .limit(per_genre)
+        )
+        track_result = await db.execute(stmt)
+        tracks = track_result.scalars().all()
+        if tracks:
+            result.append((genre.tag_name, list(tracks)))
+
+    return result
+
+
+async def get_genre_ranking(
+    db: AsyncSession,
+    top_k: int = 10,
+) -> list[tuple[str, list[Track]]]:
+    """Get top tracks per genre by play_count. Returns list of (genre_name, tracks)."""
+    # Get all genres
+    genre_result = await db.execute(select(Tag).order_by(Tag.tag_name))
+    genres = genre_result.scalars().all()
+
+    # Build global ranking for dedup: tracks sorted by play_count descending
+    # A track appearing in multiple tags only keeps its highest-ranked tag
+    global_stmt = (
+        select(Track.track_id, TrackTag.tag_id, Track.play_count)
+        .join(TrackTag, Track.track_id == TrackTag.track_id)
+        .where(Track.status == 1)
+        .order_by(Track.play_count.desc())
+    )
+    all_rows = (await db.execute(global_stmt)).fetchall()
+
+    # tag_id -> set of assigned track_ids, for dedup
+    tag_assigned: dict[int, set[str]] = {g.tag_id: set() for g in genres}
+    track_assigned_tag: dict[str, int] = {}  # track_id -> first (best) tag_id
+
+    for track_id, tag_id, _play_count in all_rows:
+        if track_id not in track_assigned_tag:
+            track_assigned_tag[track_id] = tag_id
+            tag_assigned[tag_id].add(track_id)
+
+    # Build tag_id -> tag_name map
+    tag_name_map = {g.tag_id: g.tag_name for g in genres}
+
+    result: list[tuple[str, list[Track]]] = []
+    for genre in genres:
+        assigned = tag_assigned[genre.tag_id]
+        if not assigned:
+            continue
+        # Get top_k tracks for this genre, ordered by play_count
+        stmt = (
+            select(Track)
+            .where(Track.track_id.in_(assigned), Track.status == 1)
+            .order_by(Track.play_count.desc())
+            .limit(top_k)
+        )
+        track_result = await db.execute(stmt)
+        tracks = track_result.scalars().all()
+        if tracks:
+            result.append((tag_name_map[genre.tag_id], list(tracks)))
+
+    return result

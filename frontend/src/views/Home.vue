@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import TrackCard from '@/components/common/TrackCard.vue'
-import { recommendationsApi, tracksApi } from '@/api/tracks'
+import { recommendationsApi } from '@/api/tracks'
 import { usePlayerStore } from '@/stores/player'
 import { useAuthStore } from '@/stores/auth'
 import type { Track, SourceRecommendationGroup } from '@/types'
@@ -9,7 +9,6 @@ import type { Track, SourceRecommendationGroup } from '@/types'
 const auth = useAuthStore()
 const player = usePlayerStore()
 const recommendations = ref<Track[]>([])
-const popularTracks = ref<Track[]>([])
 const similarGroups = ref<SourceRecommendationGroup[]>([])
 const loading = ref(true)
 const strategy = ref('')
@@ -19,17 +18,13 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
 onMounted(async () => {
   const promises: Promise<void>[] = []
 
-  // Load recommendations + popular
+  // Load recommendations
   promises.push(
     (async () => {
       try {
-        const [recRes, popRes] = await Promise.all([
-          recommendationsApi.getFeed({ size: 20 }),
-          tracksApi.popular(10),
-        ])
+        const recRes = await recommendationsApi.getFeed({ size: 20 })
         recommendations.value = recRes.data.items
         strategy.value = recRes.data.strategy_matched
-        popularTracks.value = popRes.data
       } catch (e) {
         console.error('Failed to load recommendations:', e)
       }
@@ -117,7 +112,13 @@ onMounted(async () => {
               <img :src="group.source.cover_url || coverFallback" :alt="group.source.title" class="header-cover" />
               <div class="header-info">
                 <div class="header-title">{{ group.source.title }}</div>
-                <div class="header-artist">{{ group.source.artist_name || 'Unknown' }}</div>
+                <router-link
+                  v-if="group.source.artist_name"
+                  :to="`/artist/${encodeURIComponent(group.source.artist_name)}`"
+                  class="header-artist header-artist-link"
+                  @click.stop
+                >{{ group.source.artist_name }}</router-link>
+                <div v-else class="header-artist">Unknown</div>
               </div>
             </div>
             <!-- Similar tracks -->
@@ -131,29 +132,17 @@ onMounted(async () => {
                 <img :src="track.cover_url || coverFallback" :alt="track.title" class="cell-cover" />
                 <div class="cell-info">
                   <div class="cell-title">{{ track.title }}</div>
-                  <div class="cell-artist">{{ track.artist_name || 'Unknown' }}</div>
+                  <router-link
+                    v-if="track.artist_name"
+                    :to="`/artist/${encodeURIComponent(track.artist_name)}`"
+                    class="cell-artist cell-artist-link"
+                    @click.stop
+                  >{{ track.artist_name }}</router-link>
+                  <div v-else class="cell-artist">Unknown</div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Popular Section -->
-    <section class="section animate-slide-up" style="animation-delay: 200ms">
-      <div class="section-header">
-        <h2 class="section-title">🔥 热门排行</h2>
-      </div>
-
-      <div class="track-list">
-        <div
-          v-for="(track, index) in popularTracks"
-          :key="track.track_id"
-          class="track-list-item"
-        >
-          <span class="rank-number" :class="{ 'top-3': index < 3 }">{{ index + 1 }}</span>
-          <TrackCard :track="track" :tracks="popularTracks" />
         </div>
       </div>
     </section>
@@ -219,32 +208,6 @@ onMounted(async () => {
 
 .skeleton-card {
   padding: var(--spacing-md);
-}
-
-.track-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.track-list-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-}
-
-.rank-number {
-  width: 28px;
-  text-align: center;
-  font-size: var(--font-size-base);
-  font-weight: 700;
-  color: var(--color-text-muted);
-  flex-shrink: 0;
-}
-
-.rank-number.top-3 {
-  color: var(--color-accent-primary);
-  font-size: var(--font-size-lg);
 }
 
 .empty-state {
@@ -331,6 +294,15 @@ onMounted(async () => {
   line-height: 1.3;
 }
 
+.header-artist-link {
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.header-artist-link:hover {
+  color: var(--color-accent-primary);
+}
+
 /* Similar track cells */
 .similar-col-tracks {
   display: flex;
@@ -386,6 +358,15 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.3;
+}
+
+.cell-artist-link {
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.cell-artist-link:hover {
+  color: var(--color-accent-primary);
 }
 
 @media (max-width: 768px) {

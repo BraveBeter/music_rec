@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import { usePlayerStore } from '@/stores/player'
+import { useAuthStore } from '@/stores/auth'
+import { useFavoritesStore } from '@/stores/favorites'
+import { interactionsApi } from '@/api/tracks'
 import { computed } from 'vue'
 
 const player = usePlayerStore()
+const auth = useAuthStore()
+const favStore = useFavoritesStore()
 
 function handleProgressClick(e: MouseEvent) {
   const bar = e.currentTarget as HTMLElement
@@ -16,11 +21,23 @@ function handleVolumeChange(e: Event) {
   player.setVolume(parseFloat(input.value))
 }
 
+async function toggleLike() {
+  if (!auth.isLoggedIn || !player.currentTrack) return
+  const nowLiked = await favStore.toggleFavorite(player.currentTrack.track_id)
+  if (nowLiked) {
+    interactionsApi.log({
+      track_id: player.currentTrack.track_id,
+      interaction_type: 2, // like
+    }).catch(() => {})
+  }
+}
+
 const trackTitle = computed(() => player.currentTrack?.title || '♪ MusicRec')
 const artistName = computed(() => player.currentTrack?.artist_name || '')
 const coverUrl = computed(() =>
   player.currentTrack?.cover_url || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%231a1a2e" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%236366f1" font-size="40">♪</text></svg>'
 )
+const isLiked = computed(() => player.currentTrack ? favStore.isFavorited(player.currentTrack.track_id) : false)
 </script>
 
 <template>
@@ -43,7 +60,12 @@ const coverUrl = computed(() =>
         </div>
         <div class="track-meta">
           <div class="track-title">{{ trackTitle }}</div>
-          <div class="track-artist">{{ player.currentTrack ? artistName : '点击任意歌曲开始播放' }}</div>
+          <router-link
+            v-if="player.currentTrack && artistName"
+            :to="`/artist/${encodeURIComponent(artistName)}`"
+            class="track-artist"
+          >{{ artistName }}</router-link>
+          <div v-else class="track-artist">{{ player.currentTrack ? artistName : '点击任意歌曲开始播放' }}</div>
         </div>
       </div>
 
@@ -54,6 +76,13 @@ const coverUrl = computed(() =>
           {{ player.isPlaying ? '⏸' : '▶' }}
         </button>
         <button class="btn-icon" @click="player.next()" :disabled="!player.currentTrack" title="下一首">⏭</button>
+        <button
+          v-if="auth.isLoggedIn"
+          :class="['like-btn', { liked: isLiked }]"
+          @click="toggleLike"
+          :disabled="!player.currentTrack"
+          :title="isLiked ? '取消收藏' : '收藏'"
+        >{{ isLiked ? '❤️' : '🤍' }}</button>
       </div>
 
       <!-- Time & Volume -->
@@ -101,7 +130,8 @@ const coverUrl = computed(() =>
   color: var(--color-text-muted);
 }
 .player-bar.idle .play-btn,
-.player-bar.idle .btn-icon {
+.player-bar.idle .btn-icon,
+.player-bar.idle .like-btn {
   opacity: 0.35;
   cursor: not-allowed;
 }
@@ -214,6 +244,12 @@ button:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.track-artist:hover {
+  color: var(--color-accent-primary);
 }
 
 .player-controls {
@@ -240,6 +276,31 @@ button:disabled {
 .play-btn:hover {
   transform: scale(1.05);
   box-shadow: var(--shadow-glow);
+}
+
+.like-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  transition: all var(--transition-fast);
+  opacity: 0.7;
+}
+
+.like-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.like-btn.liked {
+  opacity: 1;
 }
 
 .player-extra {

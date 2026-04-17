@@ -29,8 +29,8 @@ export const getTrainingHistory = (limit?: number) => adminClient.get('/admin/tr
 export const cancelTraining = (taskId: string) => adminClient.post(`/admin/training/cancel/${taskId}`)
 
 // Training — SSE stream URL (use native EventSource, not axios)
-export const trainingStreamUrl = (taskId: string) =>
-  `/admin/training/progress/${taskId}/stream`
+export const trainingStreamUrl = (taskId: string, token: string) =>
+  `/admin/training/progress/${taskId}/stream?token=${encodeURIComponent(token)}`
 
 // Scheduler
 export const getSchedules = () => adminClient.get('/admin/scheduler/schedules')

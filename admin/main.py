@@ -1,4 +1,5 @@
 """Admin Backend — Music Recommendation System Management API."""
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -53,9 +54,18 @@ async def _ensure_admin():
 
 async def _ensure_tables():
     """Ensure all ORM tables exist (handles existing databases)."""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables ensured")
+    for attempt in range(5):
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database tables ensured")
+            return
+        except Exception as e:
+            if "concurrent DDL" in str(e) and attempt < 4:
+                logger.warning(f"Concurrent DDL detected, retrying ({attempt + 1}/5)...")
+                await asyncio.sleep(2 ** attempt)
+            else:
+                raise
 
 
 @asynccontextmanager

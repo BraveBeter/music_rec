@@ -3,15 +3,18 @@ import Sidebar from '@/components/layout/Sidebar.vue'
 import PlayerBar from '@/components/player/PlayerBar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useFavoritesStore } from '@/stores/favorites'
+import { useArtistFavoritesStore } from '@/stores/artists'
 import { onMounted } from 'vue'
 
 const auth = useAuthStore()
 const favStore = useFavoritesStore()
+const artistFavStore = useArtistFavoritesStore()
 
 onMounted(() => {
   // Restore favorites if user was already logged in (e.g. page refresh)
-  if (auth.isLoggedIn && !favStore.loaded) {
-    favStore.loadFavorites()
+  if (auth.isLoggedIn) {
+    if (!favStore.loaded) favStore.loadFavorites()
+    if (!artistFavStore.loaded) artistFavStore.loadFavorites()
   }
 })
 </script>

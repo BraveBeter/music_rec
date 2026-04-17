@@ -29,3 +29,12 @@ class TrackSearchRequest(BaseModel):
     query: str | None = None
     page: int = 1
     page_size: int = 20
+
+
+class GenreTracksItem(BaseModel):
+    genre: str
+    tracks: list[TrackResponse]
+
+
+class GenreTracksResponse(BaseModel):
+    genres: list[GenreTracksItem]

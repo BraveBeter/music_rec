@@ -38,6 +38,11 @@ const router = createRouter({
       component: () => import('@/views/Favorites.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/artist/:name',
+      name: 'artist',
+      component: () => import('@/views/ArtistDetail.vue'),
+    },
   ],
 })
 

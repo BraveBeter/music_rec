@@ -17,6 +17,7 @@ from app.api.tracks import router as tracks_router
 from app.api.interactions import router as interactions_router
 from app.api.recommendations import router as recommendations_router
 from app.api.favorites import router as favorites_router
+from app.api.artists import router as artists_router
 
 settings = get_settings()
 
@@ -32,6 +33,11 @@ logger = logging.getLogger("music_rec")
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     logger.info(f"🎵 {settings.APP_NAME} starting up...")
+    # Auto-create new tables (e.g., artist_favorites)
+    from common.database import Base, engine
+    import common.models  # noqa: F401 - ensure all models are registered
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield
     logger.info(f"🎵 {settings.APP_NAME} shutting down...")
     await close_redis()
@@ -72,6 +78,7 @@ app.include_router(tracks_router, prefix=API_PREFIX)
 app.include_router(interactions_router, prefix=API_PREFIX)
 app.include_router(recommendations_router, prefix=API_PREFIX)
 app.include_router(favorites_router, prefix=API_PREFIX)
+app.include_router(artists_router, prefix=API_PREFIX)
 
 
 @app.get("/health")

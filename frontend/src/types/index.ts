@@ -60,3 +60,13 @@ export interface InteractionCreate {
   play_duration?: number
   client_timestamp?: number
 }
+
+// Genre browsing
+export interface GenreTracksItem {
+  genre: string
+  tracks: Track[]
+}
+
+export interface GenreTracksResponse {
+  genres: GenreTracksItem[]
+}

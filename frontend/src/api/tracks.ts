@@ -1,6 +1,6 @@
 /** Tracks, Recommendations & User API calls */
 import apiClient from './client'
-import type { Track, TrackListResponse, RecommendationResponse, GroupedSimilarResponse, InteractionCreate } from '@/types'
+import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, GenreTracksResponse, GroupedSimilarResponse } from '@/types'
 
 export const usersApi = {
   stats() {
@@ -22,6 +22,14 @@ export const tracksApi = {
 
   popular(limit = 20) {
     return apiClient.get<Track[]>('/tracks/popular', { params: { limit } })
+  },
+
+  genreRandom(perGenre = 5) {
+    return apiClient.get<GenreTracksResponse>('/tracks/genre-random', { params: { per_genre: perGenre } })
+  },
+
+  genreRanking(topK = 10) {
+    return apiClient.get<GenreTracksResponse>('/tracks/genre-ranking', { params: { top_k: topK } })
   },
 }
 

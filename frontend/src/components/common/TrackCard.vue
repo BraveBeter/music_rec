@@ -67,7 +67,15 @@ const isCurrentlyPlaying = () =>
     </div>
     <div class="track-details">
       <div class="track-name">{{ track.title }}</div>
-      <div class="track-artist-name">{{ track.artist_name || 'Unknown Artist' }}</div>
+      <router-link
+        v-if="track.artist_name"
+        :to="`/artist/${encodeURIComponent(track.artist_name)}`"
+        class="track-artist-link"
+        @click.stop
+      >
+        {{ track.artist_name }}
+      </router-link>
+      <div v-else class="track-artist-name">Unknown Artist</div>
     </div>
     <div class="track-actions" @click.stop>
       <span class="track-duration">{{ formatDuration(track.duration_ms) }}</span>
@@ -163,6 +171,20 @@ const isCurrentlyPlaying = () =>
 }
 
 .track-card.is-playing .track-name {
+  color: var(--color-accent-primary);
+}
+
+.track-artist-link {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+.track-artist-link:hover {
   color: var(--color-accent-primary);
 }
 

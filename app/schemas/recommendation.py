@@ -20,3 +20,8 @@ class RecommendationResponse(BaseModel):
     strategy_matched: str
     is_fallback: bool = False
     items: list[RecommendationItem]
+
+
+class SimilarRecommendationResponse(BaseModel):
+    source_tracks: list[RecommendationItem]
+    items: list[RecommendationItem]

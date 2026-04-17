@@ -3,28 +3,54 @@ import { ref, onMounted } from 'vue'
 import TrackCard from '@/components/common/TrackCard.vue'
 import { recommendationsApi, tracksApi } from '@/api/tracks'
 import { useAuthStore } from '@/stores/auth'
-import type { Track, RecommendationResponse } from '@/types'
+import type { Track } from '@/types'
 
 const auth = useAuthStore()
 const recommendations = ref<Track[]>([])
 const popularTracks = ref<Track[]>([])
+const similarTracks = ref<Track[]>([])
+const similarSources = ref<Track[]>([])
 const loading = ref(true)
 const strategy = ref('')
 
 onMounted(async () => {
-  try {
-    const [recRes, popRes] = await Promise.all([
-      recommendationsApi.getFeed({ size: 20 }),
-      tracksApi.popular(10),
-    ])
-    recommendations.value = recRes.data.items
-    strategy.value = recRes.data.strategy_matched
-    popularTracks.value = popRes.data
-  } catch (e) {
-    console.error('Failed to load recommendations:', e)
-  } finally {
-    loading.value = false
+  const promises: Promise<void>[] = []
+
+  // Load recommendations + popular
+  promises.push(
+    (async () => {
+      try {
+        const [recRes, popRes] = await Promise.all([
+          recommendationsApi.getFeed({ size: 20 }),
+          tracksApi.popular(10),
+        ])
+        recommendations.value = recRes.data.items
+        strategy.value = recRes.data.strategy_matched
+        popularTracks.value = popRes.data
+      } catch (e) {
+        console.error('Failed to load recommendations:', e)
+      }
+    })()
+  )
+
+  // Load similar recommendations (only for logged-in users)
+  if (auth.isLoggedIn) {
+    promises.push(
+      (async () => {
+        try {
+          const res = await recommendationsApi.getSimilar()
+          similarSources.value = res.data.source_tracks
+          similarTracks.value = res.data.items
+        } catch (e) {
+          // Non-critical, silently ignore
+          console.debug('Similar recommendations not available:', e)
+        }
+      })()
+    )
   }
+
+  await Promise.all(promises)
+  loading.value = false
 })
 </script>
 
@@ -68,6 +94,31 @@ onMounted(async () => {
       <div v-else class="empty-state">
         <p>暂无推荐，请先浏览一些歌曲 🎶</p>
         <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
+      </div>
+    </section>
+
+    <!-- Similar Recommendations Section (only if data) -->
+    <section
+      v-if="similarTracks.length > 0"
+      class="section animate-slide-up"
+      style="animation-delay: 150ms"
+    >
+      <div class="section-header">
+        <h2 class="section-title">🎧 猜你喜欢</h2>
+        <span class="source-hint">
+          基于 {{ similarSources.map(t => t.title).join('、') }}
+        </span>
+      </div>
+
+      <div class="track-grid">
+        <div
+          v-for="(track, index) in similarTracks"
+          :key="track.track_id"
+          class="track-grid-item animate-slide-up"
+          :style="{ animationDelay: `${index * 50}ms` }"
+        >
+          <TrackCard :track="track" :tracks="similarTracks" :show-score="true" />
+        </div>
       </div>
     </section>
 
@@ -135,6 +186,15 @@ onMounted(async () => {
   padding: 2px 8px;
   border-radius: var(--radius-sm);
   font-family: monospace;
+}
+
+.source-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .track-grid {

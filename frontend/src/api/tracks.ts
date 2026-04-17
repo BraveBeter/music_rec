@@ -1,6 +1,6 @@
 /** Tracks, Recommendations & User API calls */
 import apiClient from './client'
-import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate } from '@/types'
+import type { Track, TrackListResponse, RecommendationResponse, SimilarRecommendationResponse, InteractionCreate } from '@/types'
 
 export const usersApi = {
   stats() {
@@ -28,6 +28,10 @@ export const tracksApi = {
 export const recommendationsApi = {
   getFeed(params?: { size?: number; scene?: string; current_track_id?: string }) {
     return apiClient.get<RecommendationResponse>('/recommendations/feed', { params })
+  },
+
+  getSimilar() {
+    return apiClient.get<SimilarRecommendationResponse>('/recommendations/similar')
   },
 }
 

@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.core.dependencies import get_current_user_optional
+from app.core.dependencies import get_current_user_optional, get_current_user
 from common.models.user import User
-from app.schemas.recommendation import RecommendationResponse
-from app.services.recommendation_service import get_recommendations
+from app.schemas.recommendation import RecommendationResponse, GroupedSimilarResponse
+from app.services.recommendation_service import get_recommendations, get_similar_recommendations
 
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 
@@ -33,3 +33,16 @@ async def get_feed(
         current_track_id=current_track_id,
     )
     return RecommendationResponse(**result)
+
+
+@router.get("/similar", response_model=GroupedSimilarResponse)
+async def get_similar(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get recommendations based on user's top-played tracks using ItemCF.
+    Returns groups of similar tracks per source track.
+    """
+    result = await get_similar_recommendations(db=db, user_id=current_user.user_id)
+    return GroupedSimilarResponse(**result)

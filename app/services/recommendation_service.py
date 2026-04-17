@@ -2,9 +2,10 @@
 import json
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from common.models.track import Track
+from common.models.interaction import UserInteraction
 from common.models.offline_recommendation import OfflineRecommendation
 from app.services.track_service import get_popular_tracks
 from app.utils import get_redis
@@ -185,3 +186,108 @@ def _track_to_dict(track: Track) -> dict:
         "cover_url": track.cover_url,
         "score": None,
     }
+
+
+# ---------------------------------------------------------------------------
+# ItemCF-based similar recommendations from user's top-played tracks
+# ---------------------------------------------------------------------------
+
+_itemcf_instance = None
+
+
+def _get_itemcf():
+    """Lazy-load ItemCF model singleton."""
+    global _itemcf_instance
+    if _itemcf_instance is not None:
+        return _itemcf_instance
+
+    try:
+        from ml_pipeline.models.item_cf import ItemCF
+        model = ItemCF()
+        model.load()  # loads from data/models/item_cf/
+        _itemcf_instance = model
+        return model
+    except Exception as e:
+        logger.warning(f"Failed to load ItemCF model: {e}")
+        return None
+
+
+async def get_similar_recommendations(
+    db: AsyncSession,
+    user_id: int,
+    top_n: int = 3,
+    similar_per_track: int = 3,
+) -> dict:
+    """
+    Get recommendations based on user's top-played tracks via ItemCF.
+
+    Returns grouped by source track:
+        { groups: [{ source: {...}, similar: [...] }, ...] }
+    """
+    # 1. Get user's top N played tracks
+    stmt = (
+        select(
+            UserInteraction.track_id,
+            func.count(UserInteraction.interaction_id).label("play_count"),
+        )
+        .where(
+            UserInteraction.user_id == user_id,
+            UserInteraction.interaction_type == 1,  # play
+        )
+        .group_by(UserInteraction.track_id)
+        .order_by(func.count(UserInteraction.interaction_id).desc())
+        .limit(top_n)
+    )
+    result = await db.execute(stmt)
+    top_rows = result.fetchall()
+
+    if not top_rows:
+        return {"groups": []}
+
+    source_ids = [row[0] for row in top_rows]
+
+    # Fetch source track details
+    source_tracks = await _fetch_tracks_by_ids(db, source_ids)
+
+    # 2. Load ItemCF
+    itemcf = _get_itemcf()
+    if not itemcf:
+        return {"groups": [
+            {"source": _track_to_dict(t), "similar": []}
+            for t in source_tracks
+        ]}
+
+    # Collect all played track IDs for exclusion
+    played_stmt = (
+        select(UserInteraction.track_id)
+        .where(UserInteraction.user_id == user_id, UserInteraction.interaction_type == 1)
+        .distinct()
+    )
+    played_result = await db.execute(played_stmt)
+    played_ids = {row[0] for row in played_result.fetchall()}
+
+    # Get similar items for each source track independently
+    groups = []
+    seen_similar: set[str] = set()  # dedup across groups
+    for source_track in source_tracks:
+        similar = itemcf.get_similar_items(source_track.track_id, top_k=similar_per_track * 3)
+        picked: list[str] = []
+        for sim_track_id, _sim_score in similar:
+            if sim_track_id in played_ids or sim_track_id in seen_similar:
+                continue
+            picked.append(sim_track_id)
+            seen_similar.add(sim_track_id)
+            if len(picked) >= similar_per_track:
+                break
+
+        sim_dicts = []
+        if picked:
+            sim_tracks = await _fetch_tracks_by_ids(db, picked)
+            sim_dicts = [_track_to_dict(t) for t in sim_tracks]
+
+        groups.append({
+            "source": _track_to_dict(source_track),
+            "similar": sim_dicts,
+        })
+
+    return {"groups": groups}

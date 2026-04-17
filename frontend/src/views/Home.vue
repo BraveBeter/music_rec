@@ -2,29 +2,56 @@
 import { ref, onMounted } from 'vue'
 import TrackCard from '@/components/common/TrackCard.vue'
 import { recommendationsApi, tracksApi } from '@/api/tracks'
+import { usePlayerStore } from '@/stores/player'
 import { useAuthStore } from '@/stores/auth'
-import type { Track, RecommendationResponse } from '@/types'
+import type { Track, SourceRecommendationGroup } from '@/types'
 
 const auth = useAuthStore()
+const player = usePlayerStore()
 const recommendations = ref<Track[]>([])
 const popularTracks = ref<Track[]>([])
+const similarGroups = ref<SourceRecommendationGroup[]>([])
 const loading = ref(true)
 const strategy = ref('')
 
+const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%231a1a2e" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%236366f1" font-size="40">♪</text></svg>'
+
 onMounted(async () => {
-  try {
-    const [recRes, popRes] = await Promise.all([
-      recommendationsApi.getFeed({ size: 20 }),
-      tracksApi.popular(10),
-    ])
-    recommendations.value = recRes.data.items
-    strategy.value = recRes.data.strategy_matched
-    popularTracks.value = popRes.data
-  } catch (e) {
-    console.error('Failed to load recommendations:', e)
-  } finally {
-    loading.value = false
+  const promises: Promise<void>[] = []
+
+  // Load recommendations + popular
+  promises.push(
+    (async () => {
+      try {
+        const [recRes, popRes] = await Promise.all([
+          recommendationsApi.getFeed({ size: 20 }),
+          tracksApi.popular(10),
+        ])
+        recommendations.value = recRes.data.items
+        strategy.value = recRes.data.strategy_matched
+        popularTracks.value = popRes.data
+      } catch (e) {
+        console.error('Failed to load recommendations:', e)
+      }
+    })()
+  )
+
+  // Load similar recommendations (only for logged-in users)
+  if (auth.isLoggedIn) {
+    promises.push(
+      (async () => {
+        try {
+          const res = await recommendationsApi.getSimilar()
+          similarGroups.value = res.data.groups.filter(g => g.similar.length > 0)
+        } catch (e) {
+          console.debug('Similar recommendations not available:', e)
+        }
+      })()
+    )
   }
+
+  await Promise.all(promises)
+  loading.value = false
 })
 </script>
 
@@ -66,8 +93,50 @@ onMounted(async () => {
       </div>
 
       <div v-else class="empty-state">
-        <p>暂无推荐，请先浏览一些歌曲 🎶</p>
+        <p>暂无推荐，请先浏览一些歌曲</p>
         <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
+      </div>
+    </section>
+
+    <!-- Similar Recommendations Grid -->
+    <section
+      v-if="similarGroups.length > 0"
+      class="section animate-slide-up"
+      style="animation-delay: 150ms"
+    >
+      <div class="section-header">
+        <h2 class="section-title">🎧 猜你喜欢</h2>
+        <span class="source-hint">基于你常听的歌曲推荐</span>
+      </div>
+
+      <div class="similar-grid-wrapper">
+        <div class="similar-grid">
+          <div v-for="group in similarGroups" :key="group.source.track_id" class="similar-col">
+            <!-- Source track header -->
+            <div class="similar-col-header" @click="player.play(group.source, [group.source])">
+              <img :src="group.source.cover_url || coverFallback" :alt="group.source.title" class="header-cover" />
+              <div class="header-info">
+                <div class="header-title">{{ group.source.title }}</div>
+                <div class="header-artist">{{ group.source.artist_name || 'Unknown' }}</div>
+              </div>
+            </div>
+            <!-- Similar tracks -->
+            <div class="similar-col-tracks">
+              <div
+                v-for="track in group.similar"
+                :key="track.track_id"
+                class="similar-cell"
+                @click="player.play(track, group.similar)"
+              >
+                <img :src="track.cover_url || coverFallback" :alt="track.title" class="cell-cover" />
+                <div class="cell-info">
+                  <div class="cell-title">{{ track.title }}</div>
+                  <div class="cell-artist">{{ track.artist_name || 'Unknown' }}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -93,7 +162,7 @@ onMounted(async () => {
 
 <style scoped>
 .home-page {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
@@ -137,14 +206,15 @@ onMounted(async () => {
   font-family: monospace;
 }
 
+.source-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
 .track-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--spacing-sm);
-}
-
-.track-grid-item {
-  /* opacity is handled by the animate-slide-up animation */
 }
 
 .skeleton-card {
@@ -186,5 +256,141 @@ onMounted(async () => {
 .empty-state p {
   margin-bottom: var(--spacing-lg);
   font-size: var(--font-size-lg);
+}
+
+/* ── Similar grid ── */
+.similar-grid-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  padding-bottom: 4px;
+}
+
+.similar-grid {
+  display: flex;
+  gap: 1px;
+  min-width: max-content;
+  background: var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.similar-col {
+  min-width: 260px;
+  flex: 1;
+  background: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Source track header */
+.similar-col-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(139, 92, 246, 0.08);
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.similar-col-header:hover {
+  background: rgba(139, 92, 246, 0.14);
+}
+
+.header-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.header-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.header-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.header-artist {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+/* Similar track cells */
+.similar-col-tracks {
+  display: flex;
+  flex-direction: column;
+}
+
+.similar-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  min-height: 50px;
+}
+
+.similar-cell:last-child {
+  border-bottom: none;
+}
+
+.similar-cell:hover {
+  background: var(--color-bg-card-hover);
+}
+
+.cell-cover {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.cell-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.cell-title {
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--color-text-primary);
+  line-height: 1.3;
+}
+
+.cell-artist {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+@media (max-width: 768px) {
+  .similar-col {
+    min-width: 220px;
+  }
 }
 </style>

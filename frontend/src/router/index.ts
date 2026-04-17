@@ -39,6 +39,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/history',
+      name: 'history',
+      component: () => import('@/views/History.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/artist/:name',
       name: 'artist',
       component: () => import('@/views/ArtistDetail.vue'),

@@ -95,14 +95,14 @@ const genderLabels: Record<number, string> = { 0: '未指定', 1: '男', 2: '女
     </div>
 
     <div class="profile-stats animate-slide-up" style="animation-delay: 100ms;">
-      <div class="stat-card card">
+      <router-link to="/history" class="stat-card card stat-card-link">
         <div class="stat-value gradient-text">{{ stats.play_count ?? '--' }}</div>
         <div class="stat-label">播放次数</div>
-      </div>
-      <div class="stat-card card">
+      </router-link>
+      <router-link to="/favorites" class="stat-card card stat-card-link">
         <div class="stat-value gradient-text">{{ stats.favorites_count ?? '--' }}</div>
         <div class="stat-label">收藏歌曲</div>
-      </div>
+      </router-link>
       <div class="stat-card card">
         <div class="stat-value gradient-text">{{ stats.days_registered ?? '--' }}</div>
         <div class="stat-label">注册天数</div>
@@ -206,5 +206,16 @@ const genderLabels: Record<number, string> = { 0: '未指定', 1: '男', 2: '女
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   margin-top: var(--spacing-xs);
+}
+
+.stat-card-link {
+  text-decoration: none;
+  transition: all var(--transition-fast);
+  cursor: pointer;
+}
+
+.stat-card-link:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-glow);
 }
 </style>

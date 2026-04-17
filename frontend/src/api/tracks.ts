@@ -1,6 +1,6 @@
 /** Tracks, Recommendations & User API calls */
 import apiClient from './client'
-import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, GenreTracksResponse, GroupedSimilarResponse } from '@/types'
+import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, GenreTracksResponse, GroupedSimilarResponse, PlaybackHistoryItem } from '@/types'
 
 export const usersApi = {
   stats() {
@@ -8,6 +8,9 @@ export const usersApi = {
   },
   favoriteIds() {
     return apiClient.get<{ track_ids: string[] }>('/users/me/favorites/ids')
+  },
+  playbackHistory(limit = 500) {
+    return apiClient.get<PlaybackHistoryItem[]>('/users/me/history', { params: { limit } })
   },
 }
 

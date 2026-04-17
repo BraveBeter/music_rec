@@ -1,5 +1,4 @@
 """Interaction service - behavior logging with Redis sliding window."""
-import json
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -70,19 +69,6 @@ async def log_interaction(
     return interaction
 
 
-async def get_user_history(
-    db: AsyncSession, user_id: int, limit: int = 50
-) -> list[UserInteraction]:
-    """Get recent interactions for a user."""
-    result = await db.execute(
-        select(UserInteraction)
-        .where(UserInteraction.user_id == user_id)
-        .order_by(UserInteraction.created_at.desc())
-        .limit(limit)
-    )
-    return result.scalars().all()
-
-
 async def get_play_history(
     db: AsyncSession,
     user_id: int,
@@ -97,8 +83,6 @@ async def get_play_history(
     """
     from sqlalchemy import func, text
 
-    # Use a subquery to get the latest interaction per track
-    # Then join with tracks to get track details
     offset = (page - 1) * page_size
 
     # Count total unique tracks played
@@ -115,10 +99,8 @@ async def get_play_history(
     total = count_result.scalar() or 0
 
     # Get latest interaction per track, paginated
-    # Use ROW_NUMBER to pick latest per track
     query = text("""
-        SELECT i.interaction_id, i.user_id, i.track_id, i.interaction_type,
-               i.rating, i.play_duration, i.completion_rate, i.created_at,
+        SELECT i.interaction_id, i.track_id, i.created_at,
                t.title, t.artist_name, t.album_name,
                t.duration_ms, t.preview_url, t.cover_url, t.play_count
         FROM (
@@ -138,8 +120,6 @@ async def get_play_history(
         {"uid": user_id, "limit": page_size, "offset": offset},
     )
     rows = result.fetchall()
-
-    # Get column names from result for safe access
     col_names = result.keys()
 
     items = []
@@ -148,9 +128,6 @@ async def get_play_history(
         items.append({
             "interaction_id": row_map["interaction_id"],
             "track_id": row_map["track_id"],
-            "interaction_type": row_map["interaction_type"],
-            "play_duration": row_map["play_duration"],
-            "completion_rate": row_map["completion_rate"],
             "created_at": str(row_map["created_at"]),
             "track": {
                 "track_id": row_map["track_id"],

@@ -42,10 +42,6 @@ export const interactionsApi = {
     navigator.sendBeacon('/api/v1/interactions', blob)
   },
 
-  history(limit = 50) {
-    return apiClient.get('/interactions/history', { params: { limit } })
-  },
-
   playHistory(page = 1, pageSize = 20) {
     return apiClient.get<PlayHistoryResponse>('/interactions/play-history', {
       params: { page, page_size: pageSize },

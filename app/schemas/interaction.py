@@ -10,19 +10,6 @@ class InteractionCreate(BaseModel):
     client_timestamp: int | None = None
 
 
-class InteractionResponse(BaseModel):
-    interaction_id: int
-    track_id: str
-    interaction_type: int
-    rating: float | None = None
-    play_duration: int | None = None
-    completion_rate: float | None = None
-    created_at: str
-
-    class Config:
-        from_attributes = True
-
-
 class PlayHistoryTrack(BaseModel):
     track_id: str
     title: str
@@ -37,8 +24,6 @@ class PlayHistoryTrack(BaseModel):
 class PlayHistoryItem(BaseModel):
     interaction_id: int
     track_id: str
-    play_duration: int | None = None
-    completion_rate: float | None = None
     created_at: str
     track: PlayHistoryTrack
 

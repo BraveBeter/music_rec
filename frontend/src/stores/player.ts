@@ -179,17 +179,17 @@ export const usePlayerStore = defineStore('player', () => {
 
   function _schedulePlayLog(track: Track) {
     _clearPlayLogTimer()
-    _playLogTimer = setTimeout(() => {
+    _playLogTimer = setTimeout(async () => {
       if (currentTrack.value?.track_id === track.track_id && !_hasLoggedCurrentPlay) {
         _hasLoggedCurrentPlay = true
         const playDurationMs = Math.floor(currentTime.value * 1000)
         try {
-          interactionsApi.log({
+          await interactionsApi.log({
             track_id: track.track_id,
             interaction_type: 1,
             play_duration: Math.max(playDurationMs, 3000),
             client_timestamp: Math.floor(Date.now() / 1000),
-          }).catch(() => {})
+          })
         } catch {}
       }
     }, 3000)
@@ -205,19 +205,19 @@ export const usePlayerStore = defineStore('player', () => {
   function logPlayInteraction() {
     if (!currentTrack.value) return
     _clearPlayLogTimer()
-    if (_hasLoggedCurrentPlay) return // Already logged by the 3s timer
     const playDurationMs = Math.floor(currentTime.value * 1000)
-    if (playDurationMs < 1000) return // Don't log very short plays
+
+    if (_hasLoggedCurrentPlay) return
+    if (playDurationMs < 1000) return
 
     try {
       interactionsApi.log({
         track_id: currentTrack.value.track_id,
-        interaction_type: 1, // play
+        interaction_type: 1,
         play_duration: playDurationMs,
         client_timestamp: Math.floor(Date.now() / 1000),
       })
     } catch {
-      // Try sendBeacon as fallback
       interactionsApi.logBeacon({
         track_id: currentTrack.value.track_id,
         interaction_type: 1,

@@ -51,14 +51,6 @@ function formatDate(dateStr: string): string {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
-function formatDuration(ms: number | null): string {
-  if (!ms) return '--:--'
-  const s = Math.floor(ms / 1000)
-  const m = Math.floor(s / 60)
-  const sec = s % 60
-  return `${m}:${sec.toString().padStart(2, '0')}`
-}
-
 function nextPage() {
   if (page.value * pageSize < total.value) {
     page.value++
@@ -115,9 +107,6 @@ onMounted(() => loadHistory())
             />
             <div class="history-meta">
               <span class="history-time">{{ formatDate(item.created_at) }}</span>
-              <span v-if="item.completion_rate" class="history-completion">
-                {{ (item.completion_rate * 100).toFixed(0) }}%
-              </span>
             </div>
           </div>
         </div>
@@ -188,12 +177,6 @@ onMounted(() => loadHistory())
 .history-time {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
-}
-
-.history-completion {
-  font-size: 0.65rem;
-  color: var(--color-accent-primary);
-  opacity: 0.7;
 }
 
 .pagination {

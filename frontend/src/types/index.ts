@@ -67,8 +67,6 @@ export interface PlayHistoryTrack {
 export interface PlayHistoryItem {
   interaction_id: number
   track_id: string
-  play_duration: number | null
-  completion_rate: number | null
   created_at: string
   track: PlayHistoryTrack
 }

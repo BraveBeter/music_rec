@@ -1,6 +1,6 @@
 /** Tracks, Recommendations & User API calls */
 import apiClient from './client'
-import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate } from '@/types'
+import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, PlayHistoryResponse } from '@/types'
 
 export const usersApi = {
   stats() {
@@ -44,6 +44,12 @@ export const interactionsApi = {
 
   history(limit = 50) {
     return apiClient.get('/interactions/history', { params: { limit } })
+  },
+
+  playHistory(page = 1, pageSize = 20) {
+    return apiClient.get<PlayHistoryResponse>('/interactions/play-history', {
+      params: { page, page_size: pageSize },
+    })
   },
 }
 

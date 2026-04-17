@@ -21,3 +21,30 @@ class InteractionResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PlayHistoryTrack(BaseModel):
+    track_id: str
+    title: str
+    artist_name: str | None = None
+    album_name: str | None = None
+    duration_ms: int | None = None
+    preview_url: str | None = None
+    cover_url: str | None = None
+    play_count: int = 0
+
+
+class PlayHistoryItem(BaseModel):
+    interaction_id: int
+    track_id: str
+    play_duration: int | None = None
+    completion_rate: float | None = None
+    created_at: str
+    track: PlayHistoryTrack
+
+
+class PlayHistoryResponse(BaseModel):
+    items: list[PlayHistoryItem]
+    total: int
+    page: int
+    page_size: int

@@ -12,6 +12,7 @@ const navItems = computed(() => [
   ...(auth.isLoggedIn
     ? [
         { path: '/favorites', label: '我的收藏', icon: '❤️' },
+        { path: '/history', label: '播放历史', icon: '🕐' },
         { path: '/profile', label: '个人中心', icon: '👤' },
       ]
     : []),

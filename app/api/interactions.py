@@ -1,12 +1,12 @@
 """Interaction endpoints - behavior event logging."""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.core.dependencies import get_current_user
 from common.models.user import User
-from app.schemas.interaction import InteractionCreate, InteractionResponse
-from app.services.interaction_service import log_interaction, get_user_history
+from app.schemas.interaction import InteractionCreate, InteractionResponse, PlayHistoryResponse
+from app.services.interaction_service import log_interaction, get_user_history, get_play_history
 
 router = APIRouter(prefix="/interactions", tags=["Interactions"])
 
@@ -53,3 +53,23 @@ async def interaction_history(
             created_at=str(i.created_at),
         ))
     return results
+
+
+@router.get("/play-history", response_model=PlayHistoryResponse)
+async def play_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get deduplicated play history with pagination (latest play per track)."""
+    from app.schemas.interaction import PlayHistoryItem, PlayHistoryTrack
+    items, total = await get_play_history(
+        db, current_user.user_id, page=page, page_size=page_size,
+    )
+    return PlayHistoryResponse(
+        items=[PlayHistoryItem(**item) for item in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )

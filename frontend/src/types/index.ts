@@ -51,3 +51,31 @@ export interface InteractionCreate {
   play_duration?: number
   client_timestamp?: number
 }
+
+// Play history
+export interface PlayHistoryTrack {
+  track_id: string
+  title: string
+  artist_name: string | null
+  album_name: string | null
+  duration_ms: number | null
+  preview_url: string | null
+  cover_url: string | null
+  play_count: number
+}
+
+export interface PlayHistoryItem {
+  interaction_id: number
+  track_id: string
+  play_duration: number | null
+  completion_rate: number | null
+  created_at: string
+  track: PlayHistoryTrack
+}
+
+export interface PlayHistoryResponse {
+  items: PlayHistoryItem[]
+  total: number
+  page: number
+  page_size: number
+}

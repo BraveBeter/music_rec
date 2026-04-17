@@ -83,6 +83,84 @@ async def get_user_history(
     return result.scalars().all()
 
 
+async def get_play_history(
+    db: AsyncSession,
+    user_id: int,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict], int]:
+    """
+    Get deduplicated play history with pagination.
+
+    For each track, only the most recent play is kept.
+    Returns (items_with_track_info, total_count).
+    """
+    from sqlalchemy import func, text
+
+    # Use a subquery to get the latest interaction per track
+    # Then join with tracks to get track details
+    offset = (page - 1) * page_size
+
+    # Count total unique tracks played
+    count_result = await db.execute(
+        select(func.count()).select_from(
+            select(func.distinct(UserInteraction.track_id))
+            .where(
+                UserInteraction.user_id == user_id,
+                UserInteraction.interaction_type == 1,
+            )
+            .subquery()
+        )
+    )
+    total = count_result.scalar() or 0
+
+    # Get latest interaction per track, paginated
+    # Use ROW_NUMBER to pick latest per track
+    query = text("""
+        SELECT i.*, t.title, t.artist_name, t.album_name,
+               t.duration_ms, t.preview_url, t.cover_url, t.play_count
+        FROM (
+            SELECT ui.*,
+                   ROW_NUMBER() OVER (PARTITION BY ui.track_id ORDER BY ui.created_at DESC) AS rn
+            FROM user_interactions ui
+            WHERE ui.user_id = :uid AND ui.interaction_type = 1
+        ) i
+        JOIN tracks t ON t.track_id = i.track_id
+        WHERE i.rn = 1 AND t.status = 1
+        ORDER BY i.created_at DESC
+        LIMIT :limit OFFSET :offset
+    """)
+
+    result = await db.execute(
+        query,
+        {"uid": user_id, "limit": page_size, "offset": offset},
+    )
+    rows = result.fetchall()
+
+    items = []
+    for row in rows:
+        items.append({
+            "interaction_id": row[0],
+            "track_id": row[1],
+            "interaction_type": row[3],
+            "play_duration": row[5],
+            "completion_rate": row[6],
+            "created_at": str(row[7]),
+            "track": {
+                "track_id": row[1],
+                "title": row[8],
+                "artist_name": row[9],
+                "album_name": row[10],
+                "duration_ms": row[11],
+                "preview_url": row[12],
+                "cover_url": row[13],
+                "play_count": row[14],
+            },
+        })
+
+    return items, total
+
+
 async def get_user_sequence_from_redis(user_id: int) -> list[str]:
     """Get user's recent play sequence from Redis for SASRec."""
     try:

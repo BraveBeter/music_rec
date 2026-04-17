@@ -96,6 +96,9 @@ export const usePlayerStore = defineStore('player', () => {
     // Persist last-played track to localStorage
     try { localStorage.setItem('player_last_track', JSON.stringify(track)) } catch {}
 
+    // Log play interaction immediately when user clicks play
+    logPlayStart(track)
+
     if (track.preview_url) {
       // Use backend proxy to bypass CDN origin restrictions
       const proxyUrl = `/api/v1/tracks/${track.track_id}/preview`
@@ -165,6 +168,17 @@ export const usePlayerStore = defineStore('player', () => {
   function setVolume(v: number) {
     volume.value = v
     if (audio.value) audio.value.volume = v
+  }
+
+  function logPlayStart(track: Track) {
+    try {
+      interactionsApi.log({
+        track_id: track.track_id,
+        interaction_type: 1, // play
+        play_duration: 0,
+        client_timestamp: Math.floor(Date.now() / 1000),
+      }).catch(() => {})
+    } catch {}
   }
 
   function logPlayInteraction() {

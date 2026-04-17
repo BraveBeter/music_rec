@@ -58,17 +58,23 @@ def get_progress(task_id: str) -> dict | None:
 
 
 def list_progress() -> list[dict]:
-    return ProgressTracker.list_all_progress()
+    """Return all progress records, excluding evaluation tasks."""
+    return [r for r in ProgressTracker.list_all_progress() if r.get("task_type") != "evaluate"]
 
 
 def list_active() -> list[dict]:
-    return ProgressTracker.list_active()
+    """Return active training tasks, excluding evaluation tasks."""
+    return [t for t in ProgressTracker.list_active() if t.get("task_type") != "evaluate"]
 
 
 def list_history(limit: int = 50) -> list[dict]:
-    """Return completed/interrupted/error training runs (most recent first)."""
+    """Return completed/interrupted/error training runs (most recent first). Excludes evaluation tasks."""
     all_runs = ProgressTracker.list_all_progress()
-    history = [r for r in all_runs if r.get("status") in ("completed", "error", "interrupted")]
+    history = [
+        r for r in all_runs
+        if r.get("status") in ("completed", "error", "interrupted")
+        and r.get("task_type") != "evaluate"
+    ]
     return history[:limit]
 
 

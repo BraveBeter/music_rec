@@ -33,11 +33,6 @@ logger = logging.getLogger("music_rec")
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     logger.info(f"🎵 {settings.APP_NAME} starting up...")
-    # Auto-create new tables (e.g., artist_favorites)
-    from common.database import Base, engine
-    import common.models  # noqa: F401 - ensure all models are registered
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
     yield
     logger.info(f"🎵 {settings.APP_NAME} shutting down...")
     await close_redis()

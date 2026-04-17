@@ -81,10 +81,6 @@ docker logs musicrec_seeder -f
 
 ---
 
-## 📚 巨细无遗的“白盒”解构手册
-想深入读懂每一层推荐是怎么利用余弦公式跑出 0.9 倍率得分的？想把 FastAPI 和 Redis 的高频管线原样搬运到自己的新公司项目中？我们准备了一篇多达数千字，精确到文件每个字面量和字节参数的顶级重现级文档，将系统的防逆向与死锁解毒避雷思路全盘托出：
-
-👉 **[前往 `docs/System_Documentation_Reproduction_Level.md` 翻阅这本绝对硬核手册](./docs/System_Documentation_Reproduction_Level.md)**
 
 ---
 > *本项目基于前沿工业界推荐落地场景搭建开发，适用于学习、毕业论证与小微工业化起步实践。由开发者 Antigravity AI 结对协助保障稳固代码执行体。*

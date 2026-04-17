@@ -75,6 +75,10 @@ export const usePlayerStore = defineStore('player', () => {
     })
   }
 
+  // Track whether we've logged a play for the current track
+  let _hasLoggedCurrentPlay = false
+  let _playLogTimer: ReturnType<typeof setTimeout> | null = null
+
   function play(track: Track, tracks?: Track[]) {
     initAudio()
     if (tracks) {
@@ -85,19 +89,21 @@ export const usePlayerStore = defineStore('player', () => {
 
     // Log interaction for previous track if switching
     if (currentTrack.value && currentTrack.value.track_id !== track.track_id) {
+      _clearPlayLogTimer()
       logPlayInteraction()
     }
 
     currentTrack.value = track
     currentTime.value = 0
+    _hasLoggedCurrentPlay = false
     // Pre-initialize duration from track metadata (streaming may not have Content-Length)
     duration.value = (track.duration_ms || 30000) / 1000
 
     // Persist last-played track to localStorage
     try { localStorage.setItem('player_last_track', JSON.stringify(track)) } catch {}
 
-    // Log play interaction immediately when user clicks play
-    logPlayStart(track)
+    // Schedule a play log after 3 seconds (ensures non-zero play_duration)
+    _schedulePlayLog(track)
 
     if (track.preview_url) {
       // Use backend proxy to bypass CDN origin restrictions
@@ -105,6 +111,7 @@ export const usePlayerStore = defineStore('player', () => {
       audio.value!.src = proxyUrl
       audio.value!.play().catch(() => {
         isPlaying.value = false
+        _clearPlayLogTimer()
       })
       isPlaying.value = true
     } else {
@@ -170,19 +177,35 @@ export const usePlayerStore = defineStore('player', () => {
     if (audio.value) audio.value.volume = v
   }
 
-  function logPlayStart(track: Track) {
-    try {
-      interactionsApi.log({
-        track_id: track.track_id,
-        interaction_type: 1, // play
-        play_duration: 0,
-        client_timestamp: Math.floor(Date.now() / 1000),
-      }).catch(() => {})
-    } catch {}
+  function _schedulePlayLog(track: Track) {
+    _clearPlayLogTimer()
+    _playLogTimer = setTimeout(() => {
+      if (currentTrack.value?.track_id === track.track_id && !_hasLoggedCurrentPlay) {
+        _hasLoggedCurrentPlay = true
+        const playDurationMs = Math.floor(currentTime.value * 1000)
+        try {
+          interactionsApi.log({
+            track_id: track.track_id,
+            interaction_type: 1,
+            play_duration: Math.max(playDurationMs, 3000),
+            client_timestamp: Math.floor(Date.now() / 1000),
+          }).catch(() => {})
+        } catch {}
+      }
+    }, 3000)
+  }
+
+  function _clearPlayLogTimer() {
+    if (_playLogTimer) {
+      clearTimeout(_playLogTimer)
+      _playLogTimer = null
+    }
   }
 
   function logPlayInteraction() {
     if (!currentTrack.value) return
+    _clearPlayLogTimer()
+    if (_hasLoggedCurrentPlay) return // Already logged by the 3s timer
     const playDurationMs = Math.floor(currentTime.value * 1000)
     if (playDurationMs < 1000) return // Don't log very short plays
 

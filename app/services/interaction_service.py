@@ -117,7 +117,9 @@ async def get_play_history(
     # Get latest interaction per track, paginated
     # Use ROW_NUMBER to pick latest per track
     query = text("""
-        SELECT i.*, t.title, t.artist_name, t.album_name,
+        SELECT i.interaction_id, i.user_id, i.track_id, i.interaction_type,
+               i.rating, i.play_duration, i.completion_rate, i.created_at,
+               t.title, t.artist_name, t.album_name,
                t.duration_ms, t.preview_url, t.cover_url, t.play_count
         FROM (
             SELECT ui.*,
@@ -137,24 +139,28 @@ async def get_play_history(
     )
     rows = result.fetchall()
 
+    # Get column names from result for safe access
+    col_names = result.keys()
+
     items = []
     for row in rows:
+        row_map = dict(zip(col_names, row))
         items.append({
-            "interaction_id": row[0],
-            "track_id": row[1],
-            "interaction_type": row[3],
-            "play_duration": row[5],
-            "completion_rate": row[6],
-            "created_at": str(row[7]),
+            "interaction_id": row_map["interaction_id"],
+            "track_id": row_map["track_id"],
+            "interaction_type": row_map["interaction_type"],
+            "play_duration": row_map["play_duration"],
+            "completion_rate": row_map["completion_rate"],
+            "created_at": str(row_map["created_at"]),
             "track": {
-                "track_id": row[1],
-                "title": row[8],
-                "artist_name": row[9],
-                "album_name": row[10],
-                "duration_ms": row[11],
-                "preview_url": row[12],
-                "cover_url": row[13],
-                "play_count": row[14],
+                "track_id": row_map["track_id"],
+                "title": row_map["title"],
+                "artist_name": row_map["artist_name"],
+                "album_name": row_map["album_name"],
+                "duration_ms": row_map["duration_ms"],
+                "preview_url": row_map["preview_url"],
+                "cover_url": row_map["cover_url"],
+                "play_count": row_map["play_count"] or 0,
             },
         })
 

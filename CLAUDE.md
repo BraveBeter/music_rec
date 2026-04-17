@@ -13,7 +13,9 @@ A personalized music recommendation system with multi-level fallback. Two backen
 cp .env.example .env
 docker-compose up -d --build
 ```
-Services: `13000` (user frontend), `18000` (user backend), `19000` (admin backend), `13307` (MySQL), `16379` (Redis).
+Services: `13000` (user frontend), `14000` (admin frontend), `18000` (user backend), `19000` (admin backend), `13307` (MySQL), `16379` (Redis).
+
+No seeder container — admin backend auto-creates tables and admin account on startup.
 
 ### Backend (Local)
 ```bash
@@ -31,14 +33,14 @@ cd admin-web && npm run dev     # Admin frontend (port 5174)
 ### ML Training
 ```bash
 uv run python -m ml_pipeline.data_process.preprocess
-uv run python -m ml_pipeline.training.train_baseline    # ItemCF
+uv run python -m ml_pipeline.training.train_baseline    # ItemCF + SVD
 uv run python -m ml_pipeline.training.train_sasrec      # SASRec
 uv run python -m ml_pipeline.training.train_deepfm      # DeepFM
 ```
+All training scripts accept optional `--task-id <id>` for progress tracking via `data/training_progress/<id>.json`.
 
 ### Data Scripts
 ```bash
-uv run python scripts/init_admin.py                  # Create admin account (idempotent)
 uv run python scripts/import_jamendo.py              # Import Jamendo tracks with full streaming
 uv run python -m ml_pipeline.data_process.generate_lastfm_data       # LastFM 1K users + interactions
 uv run python -m ml_pipeline.data_process.generate_synthetic_data    # Synthetic 60 users
@@ -48,10 +50,10 @@ uv run python -m ml_pipeline.data_process.generate_synthetic_data    # Synthetic
 
 ### Shared Package (`common/`)
 Code shared between user backend and admin backend, mounted via Docker volumes at `/opt/common`.
-- `common/models/` — SQLAlchemy ORM models (7 tables)
+- `common/models/` — SQLAlchemy ORM models (9 tables, including training_schedules + training_threshold_state)
 - `common/database.py` — Async engine + session factory
-- `common/core/security.py` — JWT encode/decode
-- `common/config.py` — Pydantic Settings
+- `common/core/security.py` — JWT encode/decode, password hashing (`hash_password`, `verify_password`)
+- `common/config.py` — Pydantic Settings (`ACCESS_TOKEN_EXPIRE_MINUTES=480`)
 - `common/schemas/` — Shared Pydantic schemas
 
 ### User Backend (`app/`)
@@ -67,8 +69,12 @@ FastAPI on port 19000. Independent Docker container, imports from `common/`.
 - `api/users.py` — Batch user import
 - `api/interactions.py` — Batch interaction import
 - `api/data.py` — Trigger LastFM/synthetic data generation
-- `api/training.py` — Trigger preprocess + model training (async subprocess)
+- `api/training.py` — Trigger preprocess + model training + SSE progress streaming + history
+- `api/scheduler.py` — CRUD for scheduled/auto-retraining tasks + threshold config
 - `api/status.py` — System stats (data counts, model availability)
+- `services/training_service.py` — Training subprocess orchestration with progress tracking
+- `services/scheduler_service.py` — APScheduler wrapper (cron/interval/threshold)
+- `main.py` — Lifespan: auto-creates DB tables + admin account, starts scheduler, recovers interrupted training
 
 ### Track Sources (by ID prefix)
 - `DZ{id}` — Deezer API, 30s preview, proxy refreshes signed URL
@@ -79,10 +85,24 @@ FastAPI on port 19000. Independent Docker container, imports from `common/`.
 Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.py`.
 - `models/` — ItemCF, SASRec, DeepFM, MatrixFactorization
 - `training/` — Training scripts, output to `data/models/`
+- `training/progress.py` — File-based cross-process progress tracker (ProgressTracker)
 - `inference/recall.py` — Multi-recall: SASRec + ItemCF + tag-based + genre-aware popularity
 - `inference/ranking.py` — DeepFM ranking (70%) + recall score (30%)
 - `inference/pipeline.py` — Full pipeline with MMR diversity re-ranking
 - `data_process/` — Preprocessing, LastFM/synthetic data generation, feature engineering
+
+### Training Progress System
+- Training scripts write progress to `data/training_progress/<task_id>.json` (atomic writes)
+- Admin backend reads these files via `ProgressTracker` static methods
+- SSE endpoint (`/admin/training/progress/<task_id>/stream`) pushes real-time updates to frontend
+- Global asyncio.Lock prevents parallel training execution
+
+### Scheduler System
+- Uses APScheduler 3.x (AsyncIOScheduler) embedded in admin backend
+- Three trigger modes: cron expression, fixed interval, data threshold
+- Threshold checker runs every 10 minutes: compares current interaction count vs last training count
+- Jobs configured with `max_instances=1`, `coalesce=True`, `misfire_grace_time=300`
+- Schedule persistence: `training_schedules` table in MySQL
 
 ### Recommendation Flow (4-Level Fallback)
 1. Redis cache (`rec:user:{id}`, 30min TTL)
@@ -93,12 +113,27 @@ Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.p
 ### User Frontend (`frontend/`)
 Vue 3 + Vite + Pinia. Views: Home, Discover, Login, Register, Favorites, Profile.
 
+### Admin Frontend (`admin-web/`)
+Vue 3 + Vite + Pinia. Sidebar layout (220px fixed) + content area (max-width 1200px).
+- `components/AppLayout.vue` — Sidebar + content shell
+- `components/` — Shared: StatCard, ProgressBar, LogPanel, StatusBadge
+- `views/Dashboard.vue` — Overview: stats + model status + recent training
+- `views/DataImport.vue` — Data source management
+- `views/Training.vue` — Real-time training visualization (SSE) + history
+- `views/Scheduler.vue` — Scheduled task management + threshold config
+- `views/Models.vue` — Model availability and metrics
+- `stores/training.ts` — SSE connection management, active tasks, history
+- `stores/scheduler.ts` — Schedule CRUD, threshold state
+
 ## Key Conventions
 
-- Package manager: `uv`. Dependencies in `pyproject.toml` / `uv.lock`.
+- Package manager: `uv`. Dependencies in `pyproject.toml` / `uv.lock` + `requirements.txt` (for Docker).
 - All DB access is async (`aiomysql`).
 - Redis keys: `rec:user:{id}` (recommendation cache), `user:seq:{id}` (SASRec sequence via LPUSH).
 - On login, `auth_service.py:warm_user_sequence()` loads MySQL history into Redis for SASRec.
 - Model artifacts on disk at `data/models/`. Genre mappings at `data/processed/track_genres.json`.
 - Config: `.env` for Docker defaults, `.env.local` for local overrides.
 - Training uses genre-balanced data from `track_genres.json` and `genre_tracks.json`.
+- `data/` directory is gitignored — not tracked in version control.
+- JWT admin token expires in 480 minutes (8 hours).
+- Two git remotes: `origin` (Gitee), `github` (GitHub).

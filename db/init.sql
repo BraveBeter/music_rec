@@ -95,3 +95,26 @@ CREATE TABLE IF NOT EXISTS user_favorites (
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 训练调度任务表
+CREATE TABLE IF NOT EXISTS training_schedules (
+    schedule_id          INT           PRIMARY KEY AUTO_INCREMENT,
+    name                 VARCHAR(100)  NOT NULL,
+    task_type            VARCHAR(50)   NOT NULL COMMENT 'preprocess|train_baseline|train_sasrec|train_deepfm|train_all',
+    schedule_type        VARCHAR(20)   NOT NULL DEFAULT 'cron' COMMENT 'cron|interval|threshold',
+    cron_expr            VARCHAR(100)  NULL COMMENT 'Cron expression for cron type',
+    interval_minutes     INT           NULL COMMENT 'Interval in minutes for interval type',
+    threshold_interactions INT         NULL COMMENT 'Auto-trigger when new interactions exceed this count',
+    is_enabled           TINYINT       NOT NULL DEFAULT 1,
+    last_run_at          TIMESTAMP     NULL,
+    next_run_at          TIMESTAMP     NULL,
+    created_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 阈值触发状态表
+CREATE TABLE IF NOT EXISTS training_threshold_state (
+    id                    INT PRIMARY KEY AUTO_INCREMENT,
+    last_training_count   INT NOT NULL DEFAULT 0 COMMENT 'Interaction count at last training',
+    updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -19,7 +19,18 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
+def _get_task_id() -> str | None:
+    """Parse --task-id from sys.argv if present."""
+    for i, arg in enumerate(sys.argv):
+        if arg == "--task-id" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+    return None
+
+
 def main():
+    task_id = _get_task_id()
+    tracker = None
+
     logger.info("=" * 60)
     logger.info("Training DeepFM Ranking Model")
     logger.info("=" * 60)
@@ -33,8 +44,14 @@ def main():
         feature_meta = json.load(f)
 
     logger.info(f"Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
-    logger.info(f"Sparse features: {feature_meta['sparse_features']}")
-    logger.info(f"Dense features: {len(feature_meta['dense_features'])}")
+
+    epochs = 30
+    if task_id:
+        from ml_pipeline.training.progress import ProgressTracker
+        tracker = ProgressTracker(task_id, "train_deepfm", total_epochs=epochs)
+        tracker.__enter__()
+        tracker.update_phase("training", 0)
+        tracker.append_log(f"Train: {len(train)}, Val: {len(val)}, Test: {len(test)}")
 
     # Train
     deepfm = DeepFMRecommender()
@@ -42,11 +59,17 @@ def main():
         train_data=train,
         val_data=val,
         feature_meta=feature_meta,
-        epochs=30,
+        epochs=epochs,
         batch_size=256,
         lr=1e-3,
         patience=5,
     )
+
+    # Track per-epoch progress from history
+    if tracker and history.get("train_loss"):
+        for epoch_idx, (tl, vl) in enumerate(zip(history["train_loss"], history["val_loss"])):
+            tracker.update_epoch(epoch_idx + 1, train_loss=tl, val_loss=vl)
+        tracker.append_log(f"Training done. {len(history['train_loss'])} epochs completed.")
 
     # Save model
     deepfm.save()
@@ -69,8 +92,6 @@ def main():
     test_labels = test["label"].values
 
     preds = deepfm.predict(test_sparse, test_dense)
-
-    # Clip predictions for numerical stability
     preds_clipped = np.clip(preds, 1e-7, 1 - 1e-7)
 
     try:
@@ -81,7 +102,6 @@ def main():
         logger.warning(f"Could not compute AUC/LogLoss: {e}")
         auc, logloss = 0.0, 0.0
 
-    # Save results
     results = {
         "model": "DeepFM",
         "test_auc": float(auc),
@@ -93,6 +113,10 @@ def main():
     report_path = os.path.join(MODEL_DIR, "deepfm_report.json")
     with open(report_path, "w") as f:
         json.dump(results, f, indent=2)
+
+    if tracker:
+        tracker.mark_completed(results)
+        tracker.__exit__(None, None, None)
 
     logger.info(f"Report saved to {report_path}")
     logger.info("DeepFM training complete!")

@@ -1,5 +1,5 @@
 """Admin auth dependency."""
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, Query, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,20 +14,23 @@ security_scheme = HTTPBearer(auto_error=False)
 async def get_admin_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    token: str = Query(default=""),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Extract user from token and verify admin role."""
-    token = None
+    jwt = None
     if credentials:
-        token = credentials.credentials
-    if not token:
+        jwt = credentials.credentials
+    if not jwt:
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-    if not token:
+            jwt = auth_header[7:]
+    if not jwt and token:
+        jwt = token
+    if not jwt:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
-    payload = decode_token(token)
+    payload = decode_token(jwt)
     if not payload or payload.get("type") != "access":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 

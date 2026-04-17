@@ -6,6 +6,7 @@ import {
   runPreprocess, trainBaseline, trainSasrec, trainDeepfm, trainAll,
   trainingStreamUrl,
 } from '@/api/admin'
+import { useAuthStore } from '@/stores/auth'
 
 export interface TaskProgress {
   task_id: string
@@ -71,7 +72,8 @@ export const useTrainingStore = defineStore('training', () => {
     // Close existing connection if any
     unsubscribeFromTask(taskId)
 
-    const url = trainingStreamUrl(taskId)
+    const auth = useAuthStore()
+    const url = trainingStreamUrl(taskId, auth.token)
     const es = new EventSource(url)
 
     es.onmessage = (event) => {

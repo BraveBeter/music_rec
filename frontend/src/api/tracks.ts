@@ -1,6 +1,6 @@
 /** Tracks, Recommendations & User API calls */
 import apiClient from './client'
-import type { Track, TrackListResponse, RecommendationResponse, SimilarRecommendationResponse, InteractionCreate } from '@/types'
+import type { Track, TrackListResponse, RecommendationResponse, GroupedSimilarResponse, InteractionCreate } from '@/types'
 
 export const usersApi = {
   stats() {
@@ -31,7 +31,7 @@ export const recommendationsApi = {
   },
 
   getSimilar() {
-    return apiClient.get<SimilarRecommendationResponse>('/recommendations/similar')
+    return apiClient.get<GroupedSimilarResponse>('/recommendations/similar')
   },
 }
 

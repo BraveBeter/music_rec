@@ -25,3 +25,12 @@ class RecommendationResponse(BaseModel):
 class SimilarRecommendationResponse(BaseModel):
     source_tracks: list[RecommendationItem]
     items: list[RecommendationItem]
+
+
+class SourceRecommendationGroup(BaseModel):
+    source: RecommendationItem
+    similar: list[RecommendationItem]
+
+
+class GroupedSimilarResponse(BaseModel):
+    groups: list[SourceRecommendationGroup]

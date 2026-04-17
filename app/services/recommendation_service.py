@@ -216,13 +216,13 @@ async def get_similar_recommendations(
     db: AsyncSession,
     user_id: int,
     top_n: int = 3,
-    similar_per_track: int = 10,
+    similar_per_track: int = 3,
 ) -> dict:
     """
     Get recommendations based on user's top-played tracks via ItemCF.
 
-    Returns:
-        { source_tracks: [...], items: [...] } or { source_tracks: [], items: [] }
+    Returns grouped by source track:
+        { groups: [{ source: {...}, similar: [...] }, ...] }
     """
     # 1. Get user's top N played tracks
     stmt = (
@@ -242,18 +242,20 @@ async def get_similar_recommendations(
     top_rows = result.fetchall()
 
     if not top_rows:
-        return {"source_tracks": [], "items": []}
+        return {"groups": []}
 
     source_ids = [row[0] for row in top_rows]
 
     # Fetch source track details
     source_tracks = await _fetch_tracks_by_ids(db, source_ids)
-    source_track_dicts = [_track_to_dict(t) for t in source_tracks]
 
-    # 2. Load ItemCF and get similar items
+    # 2. Load ItemCF
     itemcf = _get_itemcf()
     if not itemcf:
-        return {"source_tracks": source_track_dicts, "items": []}
+        return {"groups": [
+            {"source": _track_to_dict(t), "similar": []}
+            for t in source_tracks
+        ]}
 
     # Collect all played track IDs for exclusion
     played_stmt = (
@@ -264,26 +266,28 @@ async def get_similar_recommendations(
     played_result = await db.execute(played_stmt)
     played_ids = {row[0] for row in played_result.fetchall()}
 
-    # Get similar items for each source track, merge with dedup
-    scored: dict[str, float] = {}
-    for track_id in source_ids:
-        similar = itemcf.get_similar_items(track_id, top_k=similar_per_track)
-        for sim_track_id, sim_score in similar:
-            if sim_track_id in played_ids:
+    # Get similar items for each source track independently
+    groups = []
+    seen_similar: set[str] = set()  # dedup across groups
+    for source_track in source_tracks:
+        similar = itemcf.get_similar_items(source_track.track_id, top_k=similar_per_track * 3)
+        picked: list[str] = []
+        for sim_track_id, _sim_score in similar:
+            if sim_track_id in played_ids or sim_track_id in seen_similar:
                 continue
-            scored[sim_track_id] = max(scored.get(sim_track_id, 0), sim_score)
+            picked.append(sim_track_id)
+            seen_similar.add(sim_track_id)
+            if len(picked) >= similar_per_track:
+                break
 
-    if not scored:
-        return {"source_tracks": source_track_dicts, "items": []}
+        sim_dicts = []
+        if picked:
+            sim_tracks = await _fetch_tracks_by_ids(db, picked)
+            sim_dicts = [_track_to_dict(t) for t in sim_tracks]
 
-    # Sort by score descending, take top 20
-    sorted_ids = sorted(scored, key=scored.get, reverse=True)[:20]
-    similar_tracks = await _fetch_tracks_by_ids(db, sorted_ids)
+        groups.append({
+            "source": _track_to_dict(source_track),
+            "similar": sim_dicts,
+        })
 
-    items = []
-    for track in similar_tracks:
-        d = _track_to_dict(track)
-        d["score"] = scored.get(track.track_id)
-        items.append(d)
-
-    return {"source_tracks": source_track_dicts, "items": items}
+    return {"groups": groups}

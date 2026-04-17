@@ -37,9 +37,13 @@ export interface RecommendationResponse {
   items: Track[]
 }
 
-export interface SimilarRecommendationResponse {
-  source_tracks: Track[]
-  items: Track[]
+export interface SourceRecommendationGroup {
+  source: Track
+  similar: Track[]
+}
+
+export interface GroupedSimilarResponse {
+  groups: SourceRecommendationGroup[]
 }
 
 export interface TrackListResponse {

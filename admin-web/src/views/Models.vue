@@ -27,7 +27,7 @@
       </div>
     </section>
 
-    <!-- Evaluation Metrics Table -->
+    <!-- Evaluation -->
     <section class="panel">
       <div class="panel-header">
         <h2>评测指标对比</h2>
@@ -36,6 +36,18 @@
         </button>
       </div>
 
+      <!-- Progress panel when evaluating -->
+      <div v-if="evaluating && evalProgress" class="eval-progress">
+        <div class="progress-header">
+          <span class="progress-phase">{{ evalProgress.current_phase || '正在评测...' }}</span>
+          <StatusBadge :status="evalProgress.status === 'running' ? 'running' : 'completed'" />
+        </div>
+        <div v-if="evalProgress.log_lines && evalProgress.log_lines.length" class="log-panel">
+          <div v-for="(line, i) in evalProgress.log_lines.slice(-15)" :key="i" class="log-line">{{ line }}</div>
+        </div>
+      </div>
+
+      <!-- Results table -->
       <div v-if="hasReports">
         <p class="desc" v-if="evalUsers">基于 {{ evalUsers }} 位用户的测试集评测结果</p>
         <div class="table-wrapper">
@@ -69,9 +81,10 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref, computed, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import { getSystemStatus, runEvaluation } from '@/api/admin'
+import { getSystemStatus, runEvaluation, trainingStreamUrl } from '@/api/admin'
+import { useAuthStore } from '@/stores/auth'
 
 interface ModelInfo {
   available: boolean
@@ -79,9 +92,12 @@ interface ModelInfo {
   report: Record<string, any> | null
 }
 
+const auth = useAuthStore()
 const modelDetails = reactive<Record<string, ModelInfo>>({})
 const evalReports = reactive<Record<string, { eval_users: number; metrics: Record<string, number> }>>({})
 const evaluating = ref(false)
+const evalProgress = ref<Record<string, any> | null>(null)
+let eventSource: EventSource | null = null
 
 const modelLabels: Record<string, string> = {
   item_cf: 'ItemCF',
@@ -111,7 +127,6 @@ const evalUsers = computed(() => {
 })
 
 const tableRows = computed(() => {
-  // Fixed order: individual models first, then funnel
   const order = ['itemcf', 'deepfm', 'sasrec', 'multi_recall_funnel']
   return order
     .filter(key => evalReports[key])
@@ -136,13 +151,60 @@ async function refresh() {
       }
     }
 
-    // Load eval reports
     for (const [key, val] of Object.entries(reports)) {
       if (val && typeof val === 'object' && 'metrics' in val) {
         evalReports[key] = val as any
       }
     }
   } catch { /* ignore */ }
+}
+
+function closeEventSource() {
+  if (eventSource) {
+    eventSource.close()
+    eventSource = null
+  }
+}
+
+async function startEvaluation() {
+  evaluating.value = true
+  evalProgress.value = null
+
+  try {
+    const { data } = await runEvaluation()
+    const taskId = data.task_id
+    if (!taskId) {
+      evaluating.value = false
+      return
+    }
+
+    // Subscribe to SSE for real-time progress
+    const url = trainingStreamUrl(taskId, auth.token)
+    eventSource = new EventSource(url)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const progress = JSON.parse(event.data)
+        evalProgress.value = progress
+
+        if (['completed', 'error', 'interrupted', 'cancelled'].includes(progress.status)) {
+          closeEventSource()
+          evaluating.value = false
+          if (progress.status === 'completed') {
+            refresh()
+          }
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    eventSource.onerror = () => {
+      closeEventSource()
+      evaluating.value = false
+      refresh()
+    }
+  } catch {
+    evaluating.value = false
+  }
 }
 
 function formatMeta(meta: Record<string, any>) {
@@ -159,29 +221,8 @@ function formatReport(report: Record<string, any>) {
     .join(', ')
 }
 
-async function startEvaluation() {
-  evaluating.value = true
-  try {
-    await runEvaluation()
-    // Poll for completion (evaluation is fast compared to training)
-    const poll = setInterval(async () => {
-      await refresh()
-      if (hasReports.value) {
-        clearInterval(poll)
-        evaluating.value = false
-      }
-    }, 3000)
-    // Timeout after 5 minutes
-    setTimeout(() => {
-      clearInterval(poll)
-      evaluating.value = false
-    }, 300000)
-  } catch {
-    evaluating.value = false
-  }
-}
-
 onMounted(refresh)
+onUnmounted(closeEventSource)
 </script>
 
 <style scoped>
@@ -246,6 +287,31 @@ onMounted(refresh)
 .btn-eval:hover:not(:disabled) { background: #c73652; }
 .btn-eval:disabled { opacity: 0.6; cursor: not-allowed; }
 .empty-eval { color: #4a4a6a; font-size: 0.9rem; }
+
+/* Evaluation progress */
+.eval-progress { margin-bottom: 1rem; }
+.progress-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.progress-phase { font-size: 0.9rem; color: #e0e0e0; }
+.log-panel {
+  background: #0a0a1a;
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 0.78rem;
+}
+.log-line {
+  color: #8a8aaa;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 
 /* Evaluation table */
 .table-wrapper { overflow-x: auto; }

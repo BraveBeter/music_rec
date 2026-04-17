@@ -11,6 +11,7 @@ Prerequisites:
 Usage:
   uv run python -m ml_pipeline.evaluation.evaluate_trained [--task-id <id>]
 """
+import argparse
 import os
 import sys
 import json
@@ -21,6 +22,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ml_pipeline.config import PROCESSED_DATA_DIR, MODEL_DIR
 from ml_pipeline.evaluation.metrics import evaluate_model, format_report
+from ml_pipeline.training.progress import ProgressTracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -187,13 +189,34 @@ def main(task_id: str | None = None):
         pass
     np.random.seed(42)
 
-    logger.info("=" * 60)
-    logger.info("Evaluating trained models (no retraining)")
-    logger.info("=" * 60)
+    # Determine models to evaluate for progress tracking
+    available_models = [n for n in ["item_cf", "deepfm", "sasrec"] if _model_available(n)]
+    total_phases = len(available_models) + (1 if available_models else 0)  # models + funnel
+
+    tracker = None
+    if task_id:
+        tracker = ProgressTracker(task_id, "evaluate", total_phases=total_phases)
+        tracker.__enter__()
+
+    def _log(msg: str):
+        logger.info(msg)
+        if tracker:
+            tracker.append_log(msg)
+
+    def _phase(name: str, idx: int):
+        if tracker:
+            tracker.update_phase(name, idx)
+
+    _log("=" * 60)
+    _log("Evaluating trained models (no retraining)")
+    _log("=" * 60)
 
     if not _check_data():
+        if tracker:
+            tracker.__exit__(None, None, None)
         sys.exit(1)
 
+    _log("Loading preprocessed data...")
     data = _load_data()
     train = data["train"]
     test = data["test"]
@@ -203,20 +226,26 @@ def main(task_id: str | None = None):
     num_items = len(track2idx)
     k_values = [5, 10, 20]
     results = []
+    phase_idx = 0
 
     # Evaluate each available model
     if _model_available("item_cf"):
-        logger.info("Evaluating ItemCF...")
+        phase_idx += 1
+        _phase("Evaluating ItemCF", phase_idx)
+        _log("Evaluating ItemCF...")
         itemcf_fn = _build_itemcf_fn(top_k=20)
         results.append(evaluate_model(
             "ItemCF", itemcf_fn, test, all_interactions,
             k_values=k_values, num_items=num_items,
         ))
+        _log("ItemCF done")
     else:
-        logger.info("ItemCF model not found, skipping")
+        _log("ItemCF model not found, skipping")
 
     if _model_available("deepfm"):
-        logger.info("Evaluating DeepFM...")
+        phase_idx += 1
+        _phase("Evaluating DeepFM", phase_idx)
+        _log("Evaluating DeepFM...")
         deepfm_fn = _build_deepfm_fn(
             data["feature_meta"], data["user_features"], data["item_features"],
             user2idx, track2idx, top_k=20, candidate_pool_size=500,
@@ -225,31 +254,40 @@ def main(task_id: str | None = None):
             "DeepFM", deepfm_fn, test, all_interactions,
             k_values=k_values, num_items=num_items,
         ))
+        _log("DeepFM done")
     else:
-        logger.info("DeepFM model not found, skipping")
+        _log("DeepFM model not found, skipping")
 
     if _model_available("sasrec"):
-        logger.info("Evaluating SASRec...")
+        phase_idx += 1
+        _phase("Evaluating SASRec", phase_idx)
+        _log("Evaluating SASRec...")
         sasrec_fn = _build_sasrec_fn(train, top_k=20)
         results.append(evaluate_model(
             "SASRec", sasrec_fn, test, all_interactions,
             k_values=k_values, num_items=num_items,
         ))
+        _log("SASRec done")
     else:
-        logger.info("SASRec model not found, skipping")
+        _log("SASRec model not found, skipping")
 
     # Funnel evaluation (requires at least one model)
     available_any = _model_available("item_cf") or _model_available("deepfm") or _model_available("sasrec")
     if available_any:
-        logger.info("Evaluating Multi-recall Funnel...")
+        phase_idx += 1
+        _phase("Evaluating Multi-recall Funnel", phase_idx)
+        _log("Evaluating Multi-recall Funnel...")
         funnel_fn = _build_funnel_fn(train, top_k=20)
         results.append(evaluate_model(
             "Multi-recall Funnel", funnel_fn, test, all_interactions,
             k_values=k_values, num_items=num_items,
         ))
+        _log("Funnel done")
 
     if not results:
-        logger.error("No trained models found. Train at least one model first.")
+        _log("No trained models found. Train at least one model first.")
+        if tracker:
+            tracker.__exit__(RuntimeError, RuntimeError("No trained models"), None)
         sys.exit(1)
 
     # Generate report
@@ -265,10 +303,16 @@ def main(task_id: str | None = None):
     with open(json_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
 
-    logger.info(f"Report saved to {report_path}")
-    logger.info(f"JSON saved to {json_path}")
-    logger.info("Done!")
+    _log(f"Report saved to {report_path}")
+    _log(f"JSON saved to {json_path}")
+    _log("Done!")
+
+    if tracker:
+        tracker.__exit__(None, None, None)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task-id", default=None)
+    args = parser.parse_args()
+    main(task_id=args.task_id)

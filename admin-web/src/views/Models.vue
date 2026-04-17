@@ -42,6 +42,7 @@
           <span class="progress-phase">{{ evalProgress.current_phase || '正在评测...' }}</span>
           <StatusBadge :status="evalProgress.status === 'running' ? 'running' : 'completed'" />
         </div>
+        <div v-if="evalProgress.error" class="eval-error">{{ evalProgress.error }}</div>
         <div v-if="evalProgress.log_lines && evalProgress.log_lines.length" class="log-panel">
           <div v-for="(line, i) in evalProgress.log_lines.slice(-15)" :key="i" class="log-line">{{ line }}</div>
         </div>
@@ -173,7 +174,7 @@ async function startEvaluation() {
   try {
     const { data } = await runEvaluation()
     const taskId = data.task_id
-    if (!taskId) {
+    if (!taskId || data.status === 'already_running') {
       evaluating.value = false
       return
     }
@@ -181,11 +182,19 @@ async function startEvaluation() {
     // Subscribe to SSE for real-time progress
     const url = trainingStreamUrl(taskId, auth.token)
     eventSource = new EventSource(url)
+    let gotData = false
 
     eventSource.onmessage = (event) => {
       try {
         const progress = JSON.parse(event.data)
+        gotData = true
         evalProgress.value = progress
+
+        if (progress.status === 'not_found') {
+          closeEventSource()
+          evaluating.value = false
+          return
+        }
 
         if (['completed', 'error', 'interrupted', 'cancelled'].includes(progress.status)) {
           closeEventSource()
@@ -199,8 +208,13 @@ async function startEvaluation() {
 
     eventSource.onerror = () => {
       closeEventSource()
-      evaluating.value = false
-      refresh()
+      // Only treat as error if we never received data (connection failed)
+      // If we got data before, the stream ended normally (task completed)
+      if (!gotData) {
+        evaluating.value = false
+        refresh()
+      }
+    }
     }
   } catch {
     evaluating.value = false
@@ -297,6 +311,11 @@ onUnmounted(closeEventSource)
   margin-bottom: 0.5rem;
 }
 .progress-phase { font-size: 0.9rem; color: #e0e0e0; }
+.eval-error {
+  color: #ff6b6b;
+  font-size: 0.85rem;
+  padding: 0.4rem 0;
+}
 .log-panel {
   background: #0a0a1a;
   border-radius: 6px;

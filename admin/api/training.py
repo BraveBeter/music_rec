@@ -84,10 +84,19 @@ async def get_training_progress(task_id: str, admin: User = Depends(get_admin_us
 async def training_progress_stream(task_id: str, admin: User = Depends(get_admin_user)):
     """SSE endpoint for real-time training progress updates."""
     async def event_generator():
+        # Wait for progress file to appear (subprocess may still be starting)
+        for _ in range(30):
+            progress = training_service.get_progress(task_id)
+            if progress:
+                break
+            await asyncio.sleep(1)
+        else:
+            yield f"data: {json.dumps({'status': 'not_found', 'task_id': task_id})}\n\n"
+            return
+
         while True:
             progress = training_service.get_progress(task_id)
             if not progress:
-                yield f"data: {json.dumps({'status': 'not_found', 'task_id': task_id})}\n\n"
                 break
             yield f"data: {json.dumps(progress, default=str)}\n\n"
             if progress.get("status") in ("completed", "error", "interrupted", "cancelled"):

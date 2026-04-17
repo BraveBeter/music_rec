@@ -215,7 +215,6 @@ async function startEvaluation() {
         refresh()
       }
     }
-    }
   } catch {
     evaluating.value = false
   }

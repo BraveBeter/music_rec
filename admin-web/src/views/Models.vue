@@ -9,7 +9,7 @@
         <div class="model-card" v-for="(info, name) in modelDetails" :key="name">
           <div class="model-header">
             <span :class="['dot', info.available ? 'green' : 'red']"></span>
-            <span class="model-name">{{ name }}</span>
+            <span class="model-name">{{ modelLabels[name] || name }}</span>
             <StatusBadge :status="info.available ? 'completed' : 'idle'" />
           </div>
           <div class="model-detail" v-if="info.available">
@@ -26,13 +26,52 @@
         </div>
       </div>
     </section>
+
+    <!-- Evaluation Metrics Table -->
+    <section class="panel">
+      <div class="panel-header">
+        <h2>评测指标对比</h2>
+        <button @click="startEvaluation" :disabled="evaluating" class="btn-eval">
+          {{ evaluating ? '评测中...' : '开始评测' }}
+        </button>
+      </div>
+
+      <div v-if="hasReports">
+        <p class="desc" v-if="evalUsers">基于 {{ evalUsers }} 位用户的测试集评测结果</p>
+        <div class="table-wrapper">
+          <table class="eval-table">
+            <thead>
+              <tr>
+                <th>模型</th>
+                <th v-for="col in metricColumns" :key="col.key">{{ col.label }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in tableRows" :key="row.model">
+                <td class="model-cell">{{ row.label }}</td>
+                <td v-for="col in metricColumns" :key="col.key">
+                  <span v-if="row.metrics[col.key] !== undefined" class="metric-val">
+                    {{ row.metrics[col.key].toFixed(4) }}
+                  </span>
+                  <span v-else class="metric-na">-</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div v-else-if="!evaluating" class="empty-eval">
+        <p>暂无评测数据。点击「开始评测」对已训练模型进行评测。</p>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import { getSystemStatus } from '@/api/admin'
+import { getSystemStatus, runEvaluation } from '@/api/admin'
 
 interface ModelInfo {
   available: boolean
@@ -41,6 +80,47 @@ interface ModelInfo {
 }
 
 const modelDetails = reactive<Record<string, ModelInfo>>({})
+const evalReports = reactive<Record<string, { eval_users: number; metrics: Record<string, number> }>>({})
+const evaluating = ref(false)
+
+const modelLabels: Record<string, string> = {
+  item_cf: 'ItemCF',
+  svd: 'SVD',
+  deepfm: 'DeepFM',
+  sasrec: 'SASRec',
+  multi_recall_funnel: 'Multi-recall Funnel',
+}
+
+const metricColumns = [
+  { key: 'precision@5', label: 'P@5' },
+  { key: 'recall@5', label: 'R@5' },
+  { key: 'hr@5', label: 'HR@5' },
+  { key: 'ndcg@5', label: 'NDCG@5' },
+  { key: 'precision@10', label: 'P@10' },
+  { key: 'recall@10', label: 'R@10' },
+  { key: 'hr@10', label: 'HR@10' },
+  { key: 'ndcg@10', label: 'NDCG@10' },
+  { key: 'coverage', label: 'Coverage' },
+]
+
+const hasReports = computed(() => Object.keys(evalReports).length > 0)
+
+const evalUsers = computed(() => {
+  const users = Object.values(evalReports).map(r => r.eval_users)
+  return users.length > 0 ? Math.max(...users) : 0
+})
+
+const tableRows = computed(() => {
+  // Fixed order: individual models first, then funnel
+  const order = ['itemcf', 'deepfm', 'sasrec', 'multi_recall_funnel']
+  return order
+    .filter(key => evalReports[key])
+    .map(key => ({
+      model: key,
+      label: modelLabels[key] || key,
+      metrics: evalReports[key].metrics,
+    }))
+})
 
 async function refresh() {
   try {
@@ -53,6 +133,13 @@ async function refresh() {
         available: !!available,
         meta: null,
         report: null,
+      }
+    }
+
+    // Load eval reports
+    for (const [key, val] of Object.entries(reports)) {
+      if (val && typeof val === 'object' && 'metrics' in val) {
+        evalReports[key] = val as any
       }
     }
   } catch { /* ignore */ }
@@ -72,6 +159,28 @@ function formatReport(report: Record<string, any>) {
     .join(', ')
 }
 
+async function startEvaluation() {
+  evaluating.value = true
+  try {
+    await runEvaluation()
+    // Poll for completion (evaluation is fast compared to training)
+    const poll = setInterval(async () => {
+      await refresh()
+      if (hasReports.value) {
+        clearInterval(poll)
+        evaluating.value = false
+      }
+    }, 3000)
+    // Timeout after 5 minutes
+    setTimeout(() => {
+      clearInterval(poll)
+      evaluating.value = false
+    }, 300000)
+  } catch {
+    evaluating.value = false
+  }
+}
+
 onMounted(refresh)
 </script>
 
@@ -81,6 +190,7 @@ onMounted(refresh)
   background: #16213e;
   border-radius: 10px;
   padding: 1.5rem;
+  margin-bottom: 1.5rem;
 }
 .panel h2 { font-size: 1.05rem; margin: 0 0 1rem; color: #e0e0e0; }
 .model-grid {
@@ -120,4 +230,43 @@ onMounted(refresh)
 .detail-label { color: #a0a0b0; margin-right: 0.5rem; }
 .detail-value { color: #60a5fa; }
 .model-empty { color: #4a4a6a; font-size: 0.85rem; margin-top: 0.5rem; }
+
+.desc { color: #a0a0b0; font-size: 0.85rem; margin: 0 0 0.75rem; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+.panel-header h2 { margin: 0; }
+.btn-eval {
+  padding: 0.4rem 0.8rem;
+  background: #e94560;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.btn-eval:hover:not(:disabled) { background: #c73652; }
+.btn-eval:disabled { opacity: 0.6; cursor: not-allowed; }
+.empty-eval { color: #4a4a6a; font-size: 0.9rem; }
+
+/* Evaluation table */
+.table-wrapper { overflow-x: auto; }
+.eval-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.eval-table th {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  color: #a0a0b0;
+  border-bottom: 1px solid #2a2a4a;
+  white-space: nowrap;
+}
+.eval-table td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #1a1a3e;
+  white-space: nowrap;
+}
+.model-cell { font-weight: 600; color: #e0e0e0; }
+.metric-val { color: #60a5fa; font-variant-numeric: tabular-nums; }
+.metric-na { color: #4a4a6a; }
 </style>

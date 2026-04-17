@@ -21,6 +21,7 @@ export const trainBaseline = () => adminClient.post('/admin/training/train-basel
 export const trainSasrec = () => adminClient.post('/admin/training/train-sasrec')
 export const trainDeepfm = () => adminClient.post('/admin/training/train-deepfm')
 export const trainAll = () => adminClient.post('/admin/training/train-all')
+export const runEvaluation = () => adminClient.post('/admin/training/evaluate')
 
 // Training — progress & history
 export const listTrainingProgress = () => adminClient.get('/admin/training/progress')

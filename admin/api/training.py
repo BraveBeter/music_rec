@@ -20,6 +20,7 @@ MODULE_MAP = {
     "train_baseline": "ml_pipeline.training.train_baseline",
     "train_sasrec": "ml_pipeline.training.train_sasrec",
     "train_deepfm": "ml_pipeline.training.train_deepfm",
+    "evaluate": "ml_pipeline.evaluation.evaluate_trained",
 }
 
 
@@ -56,6 +57,12 @@ async def train_all(admin: User = Depends(get_admin_user)):
         result = await training_service.start_training(name, MODULE_MAP[name])
         results.append(result)
     return {"status": "started", "tasks": results}
+
+
+@router.post("/evaluate")
+async def run_evaluation(admin: User = Depends(get_admin_user)):
+    """Evaluate all trained models on test data."""
+    return await training_service.start_training("evaluate", MODULE_MAP["evaluate"])
 
 
 @router.get("/progress")

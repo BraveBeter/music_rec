@@ -80,6 +80,18 @@ def list_history(limit: int = 50) -> list[dict]:
 
 async def cancel_training(task_id: str) -> dict:
     """Cancel a running training task."""
+    from ml_pipeline.training.progress import _atomic_write, _progress_path, PROGRESS_DIR, EVAL_PROGRESS_DIR
+
+    def _write_back(progress: dict):
+        """Write progress back to whichever directory it lives in."""
+        for d in [PROGRESS_DIR, EVAL_PROGRESS_DIR]:
+            path = _progress_path(task_id, d)
+            if os.path.exists(path):
+                _atomic_write(path, progress, d)
+                return
+        # Fallback: write to training dir
+        _atomic_write(_progress_path(task_id), progress)
+
     proc = _running.get(task_id)
     if not proc:
         # Check if it's still marked as running in the progress file
@@ -88,8 +100,7 @@ async def cancel_training(task_id: str) -> dict:
             progress["status"] = "cancelled"
             progress["error"] = "Cancelled by admin"
             progress["completed_at"] = datetime.now(timezone.utc).isoformat()
-            from ml_pipeline.training.progress import _atomic_write, _progress_path
-            _atomic_write(_progress_path(task_id), progress)
+            _write_back(progress)
             return {"status": "cancelled", "task_id": task_id}
         return {"status": "not_found", "task_id": task_id}
 
@@ -106,7 +117,6 @@ async def cancel_training(task_id: str) -> dict:
         progress["status"] = "cancelled"
         progress["error"] = "Cancelled by admin"
         progress["completed_at"] = datetime.now(timezone.utc).isoformat()
-        from ml_pipeline.training.progress import _atomic_write, _progress_path
-        _atomic_write(_progress_path(task_id), progress)
+        _write_back(progress)
 
     return {"status": "cancelled", "task_id": task_id}

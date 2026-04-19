@@ -17,6 +17,7 @@ export const importDeezer = (genres?: string[], limitPerGenre?: number) =>
 
 // Training — trigger
 export const runPreprocess = () => adminClient.post('/admin/training/preprocess')
+export const runFeatureEngineering = () => adminClient.post('/admin/training/feature-engineering')
 export const trainBaseline = () => adminClient.post('/admin/training/train-baseline')
 export const trainSasrec = () => adminClient.post('/admin/training/train-sasrec')
 export const trainDeepfm = () => adminClient.post('/admin/training/train-deepfm')

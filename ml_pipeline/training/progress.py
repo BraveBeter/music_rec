@@ -19,22 +19,23 @@ from datetime import datetime, timezone
 from typing import Optional
 
 PROGRESS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "training_progress")
+EVAL_PROGRESS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "evaluation_progress")
 
 MAX_LOG_LINES = 200
 
 
-def _ensure_dir():
-    os.makedirs(PROGRESS_DIR, exist_ok=True)
+def _ensure_dir(progress_dir: str = PROGRESS_DIR):
+    os.makedirs(progress_dir, exist_ok=True)
 
 
-def _progress_path(task_id: str) -> str:
-    return os.path.join(PROGRESS_DIR, f"{task_id}.json")
+def _progress_path(task_id: str, progress_dir: str = PROGRESS_DIR) -> str:
+    return os.path.join(progress_dir, f"{task_id}.json")
 
 
-def _atomic_write(path: str, data: dict):
+def _atomic_write(path: str, data: dict, progress_dir: str = PROGRESS_DIR):
     """Write JSON atomically via write-then-rename."""
-    _ensure_dir()
-    tmp_fd, tmp_path = tempfile.mkstemp(dir=PROGRESS_DIR, suffix=".tmp")
+    _ensure_dir(progress_dir)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=progress_dir, suffix=".tmp")
     try:
         with os.fdopen(tmp_fd, "w") as f:
             json.dump(data, f, indent=2, ensure_ascii=False, default=str)
@@ -48,12 +49,14 @@ def _atomic_write(path: str, data: dict):
 class ProgressTracker:
     """Context-manager progress tracker for a training task."""
 
-    def __init__(self, task_id: str, task_type: str, total_epochs: int = 0, total_phases: int = 0):
+    def __init__(self, task_id: str, task_type: str, total_epochs: int = 0, total_phases: int = 0,
+                 progress_dir: str = PROGRESS_DIR):
         self.task_id = task_id
         self.task_type = task_type
         self.total_epochs = total_epochs
         self.total_phases = total_phases
-        self._path = _progress_path(task_id)
+        self._progress_dir = progress_dir
+        self._path = _progress_path(task_id, progress_dir)
         self._data: Optional[dict] = None
 
     def __enter__(self):
@@ -91,7 +94,7 @@ class ProgressTracker:
 
     def _flush(self):
         if self._data:
-            _atomic_write(self._path, self._data)
+            _atomic_write(self._path, self._data, self._progress_dir)
 
     def update_epoch(self, epoch: int, train_loss: float = None, val_loss: float = None, metrics: dict = None):
         """Update progress after an epoch completes."""
@@ -139,25 +142,33 @@ class ProgressTracker:
 
     @staticmethod
     def read_progress(task_id: str) -> Optional[dict]:
-        path = _progress_path(task_id)
-        if not os.path.exists(path):
-            return None
-        with open(path) as f:
-            return json.load(f)
+        """Read progress from training or evaluation directory."""
+        for d in [PROGRESS_DIR, EVAL_PROGRESS_DIR]:
+            path = _progress_path(task_id, d)
+            if os.path.exists(path):
+                with open(path) as f:
+                    return json.load(f)
+        return None
 
     @staticmethod
-    def list_all_progress() -> list[dict]:
-        _ensure_dir()
+    def list_all_progress(progress_dirs: list[str] | None = None) -> list[dict]:
+        """List all progress records from specified directories (default: training only)."""
+        if progress_dirs is None:
+            progress_dirs = [PROGRESS_DIR]
         results = []
-        for fname in sorted(os.listdir(PROGRESS_DIR), reverse=True):
-            if not fname.endswith(".json"):
+        for d in progress_dirs:
+            _ensure_dir(d)
+            if not os.path.isdir(d):
                 continue
-            path = os.path.join(PROGRESS_DIR, fname)
-            try:
-                with open(path) as f:
-                    results.append(json.load(f))
-            except (json.JSONDecodeError, OSError):
-                continue
+            for fname in sorted(os.listdir(d), reverse=True):
+                if not fname.endswith(".json"):
+                    continue
+                path = os.path.join(d, fname)
+                try:
+                    with open(path) as f:
+                        results.append(json.load(f))
+                except (json.JSONDecodeError, OSError):
+                    continue
         return results
 
     @staticmethod
@@ -167,14 +178,17 @@ class ProgressTracker:
     @staticmethod
     def cleanup_old(max_age_days: int = 30):
         """Remove progress files older than max_age_days."""
-        _ensure_dir()
-        cutoff = time.time() - max_age_days * 86400
-        for fname in os.listdir(PROGRESS_DIR):
-            if not fname.endswith(".json"):
+        for d in [PROGRESS_DIR, EVAL_PROGRESS_DIR]:
+            _ensure_dir(d)
+            if not os.path.isdir(d):
                 continue
-            path = os.path.join(PROGRESS_DIR, fname)
-            if os.path.getmtime(path) < cutoff:
-                os.unlink(path)
+            cutoff = time.time() - max_age_days * 86400
+            for fname in os.listdir(d):
+                if not fname.endswith(".json"):
+                    continue
+                path = os.path.join(d, fname)
+                if os.path.getmtime(path) < cutoff:
+                    os.unlink(path)
 
     @staticmethod
     def mark_interrupted_on_startup():
@@ -183,4 +197,9 @@ class ProgressTracker:
             progress["status"] = "interrupted"
             progress["error"] = "Admin server restarted during training"
             progress["completed_at"] = datetime.now(timezone.utc).isoformat()
-            _atomic_write(_progress_path(progress["task_id"]), progress)
+            # Determine which directory the file lives in
+            for d in [PROGRESS_DIR, EVAL_PROGRESS_DIR]:
+                path = _progress_path(progress["task_id"], d)
+                if os.path.exists(path):
+                    _atomic_write(path, progress, d)
+                    break

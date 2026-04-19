@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import {
   listTrainingProgress, getTrainingProgress, getTrainingHistory,
   cancelTraining as apiCancelTraining,
-  runPreprocess, trainBaseline, trainSasrec, trainDeepfm, trainAll,
+  runPreprocess, runFeatureEngineering, trainBaseline, trainSasrec, trainDeepfm, trainAll,
   trainingStreamUrl,
 } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
@@ -34,6 +34,7 @@ export const useTrainingStore = defineStore('training', () => {
 
   const triggerMap: Record<string, () => Promise<any>> = {
     preprocess: runPreprocess,
+    feature_engineering: runFeatureEngineering,
     train_baseline: trainBaseline,
     train_sasrec: trainSasrec,
     train_deepfm: trainDeepfm,

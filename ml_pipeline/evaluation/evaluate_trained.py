@@ -22,7 +22,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ml_pipeline.config import PROCESSED_DATA_DIR, MODEL_DIR
 from ml_pipeline.evaluation.metrics import evaluate_model, format_report
-from ml_pipeline.training.progress import ProgressTracker
+from ml_pipeline.training.progress import ProgressTracker, EVAL_PROGRESS_DIR
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -206,7 +206,8 @@ def main(task_id: str | None = None):
 
     tracker = None
     if task_id:
-        tracker = ProgressTracker(task_id, "evaluate", total_phases=total_phases)
+        tracker = ProgressTracker(task_id, "evaluate", total_phases=total_phases,
+                                  progress_dir=EVAL_PROGRESS_DIR)
         tracker.__enter__()
 
     def _log(msg: str):

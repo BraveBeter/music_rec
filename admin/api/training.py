@@ -17,6 +17,7 @@ router = APIRouter(prefix="/admin/training", tags=["Admin Training"])
 # Module mapping: task name -> Python module path
 MODULE_MAP = {
     "preprocess": "ml_pipeline.data_process.preprocess",
+    "feature_engineering": "ml_pipeline.data_process.feature_engineering",
     "train_baseline": "ml_pipeline.training.train_baseline",
     "train_sasrec": "ml_pipeline.training.train_sasrec",
     "train_deepfm": "ml_pipeline.training.train_deepfm",
@@ -28,6 +29,12 @@ MODULE_MAP = {
 async def run_preprocess(admin: User = Depends(get_admin_user)):
     """Trigger data preprocessing pipeline."""
     return await training_service.start_training("preprocess", MODULE_MAP["preprocess"])
+
+
+@router.post("/feature-engineering")
+async def run_feature_engineering(admin: User = Depends(get_admin_user)):
+    """Trigger feature engineering pipeline."""
+    return await training_service.start_training("feature_engineering", MODULE_MAP["feature_engineering"])
 
 
 @router.post("/train-baseline")

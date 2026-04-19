@@ -49,6 +49,18 @@ async def start_training(name: str, module: str) -> dict:
         _running.pop(tid, None)
         logger.info(f"Training '{tid}' subprocess exited with code {process.returncode}")
 
+        # If subprocess exited abnormally and progress still shows "running",
+        # mark it as "error" so scheduler won't skip future runs
+        if process.returncode != 0:
+            progress = ProgressTracker.read_progress(tid)
+            if progress and progress.get("status") == "running":
+                progress["status"] = "error"
+                progress["error"] = f"Subprocess exited with code {process.returncode}"
+                progress["completed_at"] = datetime.now(timezone.utc).isoformat()
+                from ml_pipeline.training.progress import _atomic_write, _progress_path
+                _atomic_write(_progress_path(tid), progress)
+                logger.warning(f"Marked stuck training '{tid}' as error")
+
     asyncio.create_task(_log_output())
     return {"status": "started", "task_id": tid, "pid": process.pid}
 

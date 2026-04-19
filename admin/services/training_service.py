@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from ml_pipeline.training.progress import ProgressTracker, PROGRESS_DIR
+from ml_pipeline.training.progress import ProgressTracker, PROGRESS_DIR, EVAL_PROGRESS_DIR
 
 logger = logging.getLogger("admin")
 
@@ -65,6 +65,28 @@ def list_progress() -> list[dict]:
 def list_active() -> list[dict]:
     """Return active training tasks, excluding evaluation tasks."""
     return [t for t in ProgressTracker.list_active() if t.get("task_type") != "evaluate"]
+
+
+# ---- Evaluation-specific queries (read from EVAL_PROGRESS_DIR only) ----
+
+def list_eval_progress() -> list[dict]:
+    """Return all evaluation progress records."""
+    return ProgressTracker.list_all_progress(progress_dirs=[EVAL_PROGRESS_DIR])
+
+
+def list_eval_active() -> list[dict]:
+    """Return active evaluation tasks."""
+    return [p for p in list_eval_progress() if p.get("status") == "running"]
+
+
+def list_eval_history(limit: int = 50) -> list[dict]:
+    """Return completed/interrupted/error evaluation runs (most recent first)."""
+    all_runs = list_eval_progress()
+    history = [
+        r for r in all_runs
+        if r.get("status") in ("completed", "error", "interrupted", "cancelled")
+    ]
+    return history[:limit]
 
 
 def list_history(limit: int = 50) -> list[dict]:

@@ -30,6 +30,10 @@ export const getTrainingProgress = (taskId: string) => adminClient.get(`/admin/t
 export const getTrainingHistory = (limit?: number) => adminClient.get('/admin/training/history', { params: { limit } })
 export const cancelTraining = (taskId: string) => adminClient.post(`/admin/training/cancel/${taskId}`)
 
+// Evaluation — progress & history
+export const listEvalProgress = () => adminClient.get('/admin/training/eval-progress')
+export const getEvalHistory = (limit?: number) => adminClient.get('/admin/training/eval-history', { params: { limit } })
+
 // Training — SSE stream URL (use native EventSource, not axios)
 export const trainingStreamUrl = (taskId: string, token: string) =>
   `/admin/training/progress/${taskId}/stream?token=${encodeURIComponent(token)}`

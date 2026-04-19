@@ -78,13 +78,37 @@
         <p>暂无评测数据。点击「开始评测」对已训练模型进行评测。</p>
       </div>
     </section>
+
+    <!-- Evaluation History -->
+    <section class="panel">
+      <h2>评测历史</h2>
+      <div v-if="evalHistory.length === 0" class="empty">暂无评测记录</div>
+      <table v-else class="history-table">
+        <thead>
+          <tr>
+            <th>状态</th>
+            <th>开始时间</th>
+            <th>耗时</th>
+            <th>阶段</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="h in evalHistory" :key="h.task_id">
+            <td><StatusBadge :status="h.status as any" /></td>
+            <td>{{ formatTime(h.started_at) }}</td>
+            <td>{{ duration(h.started_at, h.completed_at) }}</td>
+            <td>{{ h.current_phase || '-' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import { getSystemStatus, runEvaluation, trainingStreamUrl } from '@/api/admin'
+import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 
 interface ModelInfo {
@@ -98,6 +122,7 @@ const modelDetails = reactive<Record<string, ModelInfo>>({})
 const evalReports = reactive<Record<string, { eval_users: number; metrics: Record<string, number> }>>({})
 const evaluating = ref(false)
 const evalProgress = ref<Record<string, any> | null>(null)
+const evalHistory = ref<any[]>([])
 let eventSource: EventSource | null = null
 
 const modelLabels: Record<string, string> = {
@@ -138,6 +163,28 @@ const tableRows = computed(() => {
     }))
 })
 
+function formatTime(t: string | null) {
+  if (!t) return '-'
+  return new Date(t).toLocaleString('zh-CN')
+}
+
+function duration(start: string | null, end: string | null) {
+  if (!start) return '-'
+  const s = new Date(start).getTime()
+  const e = end ? new Date(end).getTime() : Date.now()
+  const sec = Math.round((e - s) / 1000)
+  if (sec < 60) return `${sec}s`
+  const min = Math.floor(sec / 60)
+  return `${min}m ${sec % 60}s`
+}
+
+async function fetchEvalHistory() {
+  try {
+    const { data } = await getEvalHistory()
+    evalHistory.value = data.history || []
+  } catch { /* ignore */ }
+}
+
 async function refresh() {
   try {
     const { data } = await getSystemStatus()
@@ -158,6 +205,58 @@ async function refresh() {
       }
     }
   } catch { /* ignore */ }
+
+  fetchEvalHistory()
+  reconnectEvalSSE()
+}
+
+function reconnectEvalSSE() {
+  // Check if there's a running evaluation and re-subscribe to SSE
+  listEvalProgress().then(({ data }) => {
+    const running = (data.progress || []).find((t: any) => t.status === 'running')
+    if (running) {
+      evaluating.value = true
+      evalProgress.value = running
+      subscribeEvalSSE(running.task_id)
+    }
+  }).catch(() => { /* ignore */ })
+}
+
+function subscribeEvalSSE(taskId: string) {
+  closeEventSource()
+  const url = trainingStreamUrl(taskId, auth.token)
+  eventSource = new EventSource(url)
+  let gotData = false
+
+  eventSource.onmessage = (event) => {
+    try {
+      const progress = JSON.parse(event.data)
+      gotData = true
+      evalProgress.value = progress
+
+      if (progress.status === 'not_found') {
+        closeEventSource()
+        evaluating.value = false
+        return
+      }
+
+      if (['completed', 'error', 'interrupted', 'cancelled'].includes(progress.status)) {
+        closeEventSource()
+        evaluating.value = false
+        if (progress.status === 'completed') {
+          refresh()
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  eventSource.onerror = () => {
+    closeEventSource()
+    if (!gotData) {
+      evaluating.value = false
+      refresh()
+    }
+  }
 }
 
 function closeEventSource() {
@@ -179,42 +278,7 @@ async function startEvaluation() {
       return
     }
 
-    // Subscribe to SSE for real-time progress
-    const url = trainingStreamUrl(taskId, auth.token)
-    eventSource = new EventSource(url)
-    let gotData = false
-
-    eventSource.onmessage = (event) => {
-      try {
-        const progress = JSON.parse(event.data)
-        gotData = true
-        evalProgress.value = progress
-
-        if (progress.status === 'not_found') {
-          closeEventSource()
-          evaluating.value = false
-          return
-        }
-
-        if (['completed', 'error', 'interrupted', 'cancelled'].includes(progress.status)) {
-          closeEventSource()
-          evaluating.value = false
-          if (progress.status === 'completed') {
-            refresh()
-          }
-        }
-      } catch { /* ignore parse errors */ }
-    }
-
-    eventSource.onerror = () => {
-      closeEventSource()
-      // Only treat as error if we never received data (connection failed)
-      // If we got data before, the stream ended normally (task completed)
-      if (!gotData) {
-        evaluating.value = false
-        refresh()
-      }
-    }
+    subscribeEvalSSE(taskId)
   } catch {
     evaluating.value = false
   }
@@ -353,4 +417,22 @@ onUnmounted(closeEventSource)
 .model-cell { font-weight: 600; color: #e0e0e0; }
 .metric-val { color: #60a5fa; font-variant-numeric: tabular-nums; }
 .metric-na { color: #4a4a6a; }
+
+/* History table */
+.empty { color: #4a4a6a; font-size: 0.9rem; padding: 0.5rem 0; }
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.history-table th {
+  text-align: left;
+  padding: 0.5rem;
+  color: #a0a0b0;
+  border-bottom: 1px solid #2a2a4a;
+}
+.history-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid #1a1a3e;
+}
 </style>

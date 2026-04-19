@@ -123,3 +123,17 @@ async def training_history(limit: int = Query(50, ge=1, le=200), admin: User = D
 async def cancel_training(task_id: str, admin: User = Depends(get_admin_user)):
     """Cancel a running training task."""
     return await training_service.cancel_training(task_id)
+
+
+# ---- Evaluation-specific endpoints ----
+
+@router.get("/eval-progress")
+async def list_eval_progress(admin: User = Depends(get_admin_user)):
+    """List all evaluation progress records."""
+    return {"progress": training_service.list_eval_progress()}
+
+
+@router.get("/eval-history")
+async def eval_history(limit: int = Query(50, ge=1, le=200), admin: User = Depends(get_admin_user)):
+    """Get completed evaluation history."""
+    return {"history": training_service.list_eval_history(limit)}

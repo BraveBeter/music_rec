@@ -33,7 +33,10 @@ VALID_SCHEDULE_TYPES = ["cron", "interval", "threshold"]
 
 class SchedulerService:
     def __init__(self):
-        self._scheduler = AsyncIOScheduler(timezone="UTC")
+        from common.config import get_settings
+        settings = get_settings()
+        tz = getattr(settings, 'SCHEDULER_TIMEZONE', 'Asia/Shanghai')
+        self._scheduler = AsyncIOScheduler(timezone=tz)
         self._started = False
 
     async def start(self):
@@ -153,7 +156,7 @@ class SchedulerService:
                         return
 
                     task_type = schedule.task_type
-                    schedule.last_run_at = datetime.now(timezone.utc)
+                    schedule.last_run_at = datetime.now()
                     await session.commit()
 
                 if task_type == "train_all":

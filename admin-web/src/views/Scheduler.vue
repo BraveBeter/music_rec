@@ -81,7 +81,7 @@
         <div class="form-row" v-if="form.schedule_type === 'cron'">
           <label>Cron 表达式</label>
           <input v-model="form.cron_expr" placeholder="分 时 日 月 周  例: 0 3 * * *" />
-          <span class="hint">格式: 分 时 日 月 周 (UTC)</span>
+          <span class="hint">格式: 分 时 日 月 周 (北京时间)</span>
         </div>
         <div class="form-row" v-if="form.schedule_type === 'interval'">
           <label>间隔 (分钟)</label>

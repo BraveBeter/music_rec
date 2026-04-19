@@ -37,8 +37,13 @@ def _load_deepfm():
         _deepfm = DeepFMRecommender()
         _deepfm.load()
 
-        with open(os.path.join(PROCESSED_DATA_DIR, "feature_meta.json")) as f:
-            _feature_meta = json.load(f)
+        # Use model's own feature metadata for correct input alignment
+        # (feature_meta.json may have different feature counts after re-running feature_engineering)
+        _feature_meta = {
+            "sparse_features": _deepfm.sparse_features,
+            "dense_features": _deepfm.dense_features,
+            "sparse_dims": _deepfm.sparse_dims,
+        }
 
         logger.info("DeepFM model loaded for ranking")
     except Exception as e:
@@ -60,8 +65,14 @@ def _load_onnx():
         import onnxruntime as ort
         _onnx_session = ort.InferenceSession(onnx_path)
 
-        with open(os.path.join(PROCESSED_DATA_DIR, "feature_meta.json")) as f:
-            _feature_meta = json.load(f)
+        # Load feature metadata from saved model (not from processed data)
+        meta_path = os.path.join(MODEL_DIR, "deepfm", "meta.json")
+        if os.path.exists(meta_path):
+            with open(meta_path) as f:
+                _feature_meta = json.load(f)
+        else:
+            with open(os.path.join(PROCESSED_DATA_DIR, "feature_meta.json")) as f:
+                _feature_meta = json.load(f)
 
         logger.info("ONNX DeepFM model loaded for ranking")
     except Exception as e:
@@ -138,6 +149,7 @@ def rank_candidates(
     user_row = user_row.iloc[0]
     sparse_features = _feature_meta["sparse_features"]
     dense_features = _feature_meta["dense_features"]
+    sparse_dims = _feature_meta.get("sparse_dims", {})
 
     sparse_rows = []
     dense_rows = []
@@ -154,15 +166,19 @@ def rank_candidates(
         sparse_vals = []
         for feat in sparse_features:
             if feat == "user_idx":
-                sparse_vals.append(int(_user2idx.get(user_id, 0)))
+                val = int(_user2idx.get(user_id, 0))
             elif feat == "track_idx":
-                sparse_vals.append(int(_track2idx.get(track_id, 0)))
+                val = int(_track2idx.get(track_id, 0))
             elif feat in user_row.index:
-                sparse_vals.append(int(user_row[feat]))
+                val = int(user_row[feat])
             elif feat in item_row.index:
-                sparse_vals.append(int(item_row[feat]))
+                val = int(item_row[feat])
             else:
-                sparse_vals.append(0)
+                val = 0
+            # Clip to valid embedding range
+            if feat in sparse_dims:
+                val = min(val, sparse_dims[feat] - 1)
+            sparse_vals.append(val)
 
         # Build dense features
         dense_vals = []

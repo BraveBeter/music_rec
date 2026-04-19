@@ -2,7 +2,11 @@
 Feature Engineering Pipeline.
 Builds user features, item features, and interaction features
 for DeepFM and other models.
+
+Usage:
+  uv run python -m ml_pipeline.data_process.feature_engineering [--task-id <id>]
 """
+import argparse
 import os
 import sys
 import logging
@@ -14,6 +18,7 @@ from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ml_pipeline.config import PROCESSED_DATA_DIR, NEG_SAMPLE_RATIO, COMPLETION_RATE_THRESHOLD
+from ml_pipeline.training.progress import ProgressTracker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -183,13 +188,28 @@ def negative_sampling(
     return combined
 
 
-def run_feature_engineering():
+def run_feature_engineering(task_id: str | None = None):
     """Main feature engineering pipeline."""
-    logger.info("=" * 60)
-    logger.info("Starting feature engineering")
-    logger.info("=" * 60)
+    tracker = None
+    if task_id:
+        tracker = ProgressTracker(task_id, "feature_engineering", total_phases=4)
+        tracker.__enter__()
+
+    def _log(msg: str):
+        logger.info(msg)
+        if tracker:
+            tracker.append_log(msg)
+
+    def _phase(name: str, idx: int):
+        if tracker:
+            tracker.update_phase(name, idx)
+
+    _log("=" * 60)
+    _log("Starting feature engineering")
+    _log("=" * 60)
 
     # Load preprocessed data
+    _log("Loading preprocessed data...")
     train = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "train.parquet"))
     val = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "val.parquet"))
     test = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "test.parquet"))
@@ -204,18 +224,22 @@ def run_feature_engineering():
     all_track_ids = list(track2idx.keys())
 
     # Build features
-    logger.info("[1/4] Building user features...")
+    _phase("Building user features", 1)
+    _log("[1/4] Building user features...")
     user_features = build_user_features(users, all_interactions)
 
-    logger.info("[2/4] Building item features...")
+    _phase("Building item features", 2)
+    _log("[2/4] Building item features...")
     item_features = build_item_features(tracks, all_interactions)
 
     # Negative sampling for train
-    logger.info("[3/4] Negative sampling for training set...")
+    _phase("Negative sampling", 3)
+    _log("[3/4] Negative sampling for training set...")
     train_augmented = negative_sampling(train, all_track_ids)
 
     # Build DeepFM datasets
-    logger.info("[4/4] Building DeepFM feature matrices...")
+    _phase("Building DeepFM feature matrices", 4)
+    _log("[4/4] Building DeepFM feature matrices...")
     train_dm = build_deepfm_dataset(train_augmented, user_features, item_features, track2idx, user2idx)
     val_dm = build_deepfm_dataset(val, user_features, item_features, track2idx, user2idx)
     test_dm = build_deepfm_dataset(test, user_features, item_features, track2idx, user2idx)
@@ -260,13 +284,19 @@ def run_feature_engineering():
     with open(os.path.join(PROCESSED_DATA_DIR, "feature_meta.json"), "w") as f:
         json.dump(feature_meta, f, indent=2)
 
-    logger.info("=" * 60)
-    logger.info("Feature engineering complete!")
-    logger.info(f"  Sparse features: {sparse_features}")
-    logger.info(f"  Dense features ({len(dense_features)}): {dense_features[:5]}...")
-    logger.info(f"  Output: {PROCESSED_DATA_DIR}")
-    logger.info("=" * 60)
+    _log("=" * 60)
+    _log("Feature engineering complete!")
+    _log(f"  Sparse features: {sparse_features}")
+    _log(f"  Dense features ({len(dense_features)}): {dense_features[:5]}...")
+    _log(f"  Output: {PROCESSED_DATA_DIR}")
+    _log("=" * 60)
+
+    if tracker:
+        tracker.__exit__(None, None, None)
 
 
 if __name__ == "__main__":
-    run_feature_engineering()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task-id", default=None)
+    args = parser.parse_args()
+    run_feature_engineering(task_id=args.task_id)

@@ -90,10 +90,11 @@ import { useTrainingStore } from '@/stores/training'
 const store = useTrainingStore()
 
 const steps = [
-  { action: 'preprocess', name: '数据预处理', running: false },
-  { action: 'train_baseline', name: 'ItemCF + SVD', running: false },
-  { action: 'train_sasrec', name: 'SASRec', running: false },
-  { action: 'train_deepfm', name: 'DeepFM', running: false },
+  { action: 'preprocess', name: '数据预处理' },
+  { action: 'feature_engineering', name: '特征工程' },
+  { action: 'train_baseline', name: 'ItemCF + SVD' },
+  { action: 'train_sasrec', name: 'SASRec' },
+  { action: 'train_deepfm', name: 'DeepFM' },
 ]
 
 const activeList = computed(() => Object.values(store.activeTasks))
@@ -103,6 +104,7 @@ const isAnyRunning = computed(() => activeList.value.some(t => t.status === 'run
 function formatType(t: string) {
   const map: Record<string, string> = {
     preprocess: '数据预处理',
+    feature_engineering: '特征工程',
     train_baseline: 'ItemCF + SVD',
     train_sasrec: 'SASRec',
     train_deepfm: 'DeepFM',

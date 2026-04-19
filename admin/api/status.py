@@ -1,4 +1,5 @@
 """Admin status — system overview."""
+import json
 import os
 import logging
 from fastapi import APIRouter, Depends
@@ -32,7 +33,27 @@ async def system_status(
         meta_path = os.path.join(MODEL_DIR, model_name, "meta.json")
         models[model_name] = os.path.exists(meta_path)
 
+    # Model evaluation reports
+    reports = {}
+    report_path = os.path.join(MODEL_DIR, "comparison_report.json")
+    if os.path.exists(report_path):
+        try:
+            with open(report_path) as f:
+                eval_results = json.load(f)
+            for r in eval_results:
+                model_key = r.get("model", "").lower().replace(" ", "_").replace("-", "_")
+                reports[model_key] = {
+                    "eval_users": r.get("eval_users", 0),
+                    "metrics": {
+                        k: round(v, 4) for k, v in r.items()
+                        if k not in ("model", "eval_users") and isinstance(v, (int, float))
+                    },
+                }
+        except Exception as e:
+            logger.warning(f"Failed to load comparison_report.json: {e}")
+
     return {
         "data": counts,
         "models": models,
+        "reports": reports,
     }

@@ -21,10 +21,10 @@
 
     <!-- Recent Training -->
     <section class="panel">
-      <h2>最近训练</h2>
-      <div v-if="recentTasks.length === 0" class="empty">暂无训练记录</div>
+      <h2>训练记录</h2>
+      <div v-if="recentTraining.length === 0" class="empty">暂无训练记录</div>
       <div v-else class="task-list">
-        <div class="task-row" v-for="t in recentTasks" :key="t.task_id">
+        <div class="task-row" v-for="t in recentTraining" :key="t.task_id">
           <div class="task-info">
             <span class="task-type">{{ formatType(t.task_type) }}</span>
             <span class="task-time">{{ formatTime(t.started_at) }}</span>
@@ -34,6 +34,22 @@
       </div>
       <router-link to="/training" class="link">查看全部训练 &rarr;</router-link>
     </section>
+
+    <!-- Recent Evaluations -->
+    <section class="panel">
+      <h2>评测记录</h2>
+      <div v-if="recentEval.length === 0" class="empty">暂无评测记录</div>
+      <div v-else class="task-list">
+        <div class="task-row" v-for="t in recentEval" :key="t.task_id">
+          <div class="task-info">
+            <span class="task-type">模型评测</span>
+            <span class="task-time">{{ formatTime(t.started_at) }}</span>
+          </div>
+          <StatusBadge :status="t.status as any" />
+        </div>
+      </div>
+      <router-link to="/models" class="link">查看模型状态 &rarr;</router-link>
+    </section>
   </div>
 </template>
 
@@ -41,11 +57,12 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import StatCard from '@/components/StatCard.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import { getSystemStatus, listTrainingProgress } from '@/api/admin'
+import { getSystemStatus, listTrainingProgress, getEvalHistory } from '@/api/admin'
 
 const dataCounts = reactive<Record<string, number>>({ users: 0, tracks: 0, user_interactions: 0, track_features: 0, tags: 0 })
 const models = reactive<Record<string, boolean>>({})
-const recentTasks = ref<any[]>([])
+const recentTraining = ref<any[]>([])
+const recentEval = ref<any[]>([])
 
 const stats = computed(() => [
   { label: '用户数', value: dataCounts.users },
@@ -58,6 +75,7 @@ const stats = computed(() => [
 function formatType(t: string) {
   const map: Record<string, string> = {
     preprocess: '数据预处理',
+    feature_engineering: '特征工程',
     train_baseline: 'ItemCF + SVD',
     train_sasrec: 'SASRec',
     train_deepfm: 'DeepFM',
@@ -79,7 +97,12 @@ async function refresh() {
 
   try {
     const { data } = await listTrainingProgress()
-    recentTasks.value = (data.progress || []).slice(0, 5)
+    recentTraining.value = (data.progress || []).slice(0, 5)
+  } catch { /* ignore */ }
+
+  try {
+    const { data } = await getEvalHistory()
+    recentEval.value = (data.history || []).slice(0, 5)
   } catch { /* ignore */ }
 }
 

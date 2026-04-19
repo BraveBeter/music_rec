@@ -17,9 +17,11 @@ router = APIRouter(prefix="/admin/training", tags=["Admin Training"])
 # Module mapping: task name -> Python module path
 MODULE_MAP = {
     "preprocess": "ml_pipeline.data_process.preprocess",
+    "feature_engineering": "ml_pipeline.data_process.feature_engineering",
     "train_baseline": "ml_pipeline.training.train_baseline",
     "train_sasrec": "ml_pipeline.training.train_sasrec",
     "train_deepfm": "ml_pipeline.training.train_deepfm",
+    "evaluate": "ml_pipeline.evaluation.evaluate_trained",
 }
 
 
@@ -27,6 +29,12 @@ MODULE_MAP = {
 async def run_preprocess(admin: User = Depends(get_admin_user)):
     """Trigger data preprocessing pipeline."""
     return await training_service.start_training("preprocess", MODULE_MAP["preprocess"])
+
+
+@router.post("/feature-engineering")
+async def run_feature_engineering(admin: User = Depends(get_admin_user)):
+    """Trigger feature engineering pipeline."""
+    return await training_service.start_training("feature_engineering", MODULE_MAP["feature_engineering"])
 
 
 @router.post("/train-baseline")
@@ -58,6 +66,12 @@ async def train_all(admin: User = Depends(get_admin_user)):
     return {"status": "started", "tasks": results}
 
 
+@router.post("/evaluate")
+async def run_evaluation(admin: User = Depends(get_admin_user)):
+    """Evaluate all trained models on test data."""
+    return await training_service.start_training("evaluate", MODULE_MAP["evaluate"])
+
+
 @router.get("/progress")
 async def list_training_progress(admin: User = Depends(get_admin_user)):
     """List all training progress records."""
@@ -77,10 +91,19 @@ async def get_training_progress(task_id: str, admin: User = Depends(get_admin_us
 async def training_progress_stream(task_id: str, admin: User = Depends(get_admin_user)):
     """SSE endpoint for real-time training progress updates."""
     async def event_generator():
+        # Wait for progress file to appear (subprocess may still be starting)
+        for _ in range(30):
+            progress = training_service.get_progress(task_id)
+            if progress:
+                break
+            await asyncio.sleep(1)
+        else:
+            yield f"data: {json.dumps({'status': 'not_found', 'task_id': task_id})}\n\n"
+            return
+
         while True:
             progress = training_service.get_progress(task_id)
             if not progress:
-                yield f"data: {json.dumps({'status': 'not_found', 'task_id': task_id})}\n\n"
                 break
             yield f"data: {json.dumps(progress, default=str)}\n\n"
             if progress.get("status") in ("completed", "error", "interrupted", "cancelled"):
@@ -100,3 +123,17 @@ async def training_history(limit: int = Query(50, ge=1, le=200), admin: User = D
 async def cancel_training(task_id: str, admin: User = Depends(get_admin_user)):
     """Cancel a running training task."""
     return await training_service.cancel_training(task_id)
+
+
+# ---- Evaluation-specific endpoints ----
+
+@router.get("/eval-progress")
+async def list_eval_progress(admin: User = Depends(get_admin_user)):
+    """List all evaluation progress records."""
+    return {"progress": training_service.list_eval_progress()}
+
+
+@router.get("/eval-history")
+async def eval_history(limit: int = Query(50, ge=1, le=200), admin: User = Depends(get_admin_user)):
+    """Get completed evaluation history."""
+    return {"history": training_service.list_eval_history(limit)}

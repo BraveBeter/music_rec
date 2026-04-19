@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from ml_pipeline.training.progress import ProgressTracker, PROGRESS_DIR
+from ml_pipeline.training.progress import ProgressTracker, PROGRESS_DIR, EVAL_PROGRESS_DIR
 
 logger = logging.getLogger("admin")
 
@@ -70,22 +70,62 @@ def get_progress(task_id: str) -> dict | None:
 
 
 def list_progress() -> list[dict]:
-    return ProgressTracker.list_all_progress()
+    """Return all progress records, excluding evaluation tasks."""
+    return [r for r in ProgressTracker.list_all_progress() if r.get("task_type") != "evaluate"]
 
 
 def list_active() -> list[dict]:
-    return ProgressTracker.list_active()
+    """Return active training tasks, excluding evaluation tasks."""
+    return [t for t in ProgressTracker.list_active() if t.get("task_type") != "evaluate"]
+
+
+# ---- Evaluation-specific queries (read from EVAL_PROGRESS_DIR only) ----
+
+def list_eval_progress() -> list[dict]:
+    """Return all evaluation progress records."""
+    return ProgressTracker.list_all_progress(progress_dirs=[EVAL_PROGRESS_DIR])
+
+
+def list_eval_active() -> list[dict]:
+    """Return active evaluation tasks."""
+    return [p for p in list_eval_progress() if p.get("status") == "running"]
+
+
+def list_eval_history(limit: int = 50) -> list[dict]:
+    """Return completed/interrupted/error evaluation runs (most recent first)."""
+    all_runs = list_eval_progress()
+    history = [
+        r for r in all_runs
+        if r.get("status") in ("completed", "error", "interrupted", "cancelled")
+    ]
+    return history[:limit]
 
 
 def list_history(limit: int = 50) -> list[dict]:
-    """Return completed/interrupted/error training runs (most recent first)."""
+    """Return completed/interrupted/error training runs (most recent first). Excludes evaluation tasks."""
     all_runs = ProgressTracker.list_all_progress()
-    history = [r for r in all_runs if r.get("status") in ("completed", "error", "interrupted")]
+    history = [
+        r for r in all_runs
+        if r.get("status") in ("completed", "error", "interrupted")
+        and r.get("task_type") != "evaluate"
+    ]
     return history[:limit]
 
 
 async def cancel_training(task_id: str) -> dict:
     """Cancel a running training task."""
+    from ml_pipeline.training.progress import _atomic_write, _progress_path, PROGRESS_DIR, EVAL_PROGRESS_DIR
+
+    def _write_back(progress: dict):
+        """Write progress back to whichever directory it lives in."""
+        for d in [PROGRESS_DIR, EVAL_PROGRESS_DIR]:
+            path = _progress_path(task_id, d)
+            if os.path.exists(path):
+                _atomic_write(path, progress, d)
+                return
+        # Fallback: write to training dir
+        _atomic_write(_progress_path(task_id), progress)
+
     proc = _running.get(task_id)
     if not proc:
         # Check if it's still marked as running in the progress file
@@ -94,8 +134,7 @@ async def cancel_training(task_id: str) -> dict:
             progress["status"] = "cancelled"
             progress["error"] = "Cancelled by admin"
             progress["completed_at"] = datetime.now(timezone.utc).isoformat()
-            from ml_pipeline.training.progress import _atomic_write, _progress_path
-            _atomic_write(_progress_path(task_id), progress)
+            _write_back(progress)
             return {"status": "cancelled", "task_id": task_id}
         return {"status": "not_found", "task_id": task_id}
 
@@ -112,7 +151,6 @@ async def cancel_training(task_id: str) -> dict:
         progress["status"] = "cancelled"
         progress["error"] = "Cancelled by admin"
         progress["completed_at"] = datetime.now(timezone.utc).isoformat()
-        from ml_pipeline.training.progress import _atomic_write, _progress_path
-        _atomic_write(_progress_path(task_id), progress)
+        _write_back(progress)
 
     return {"status": "cancelled", "task_id": task_id}

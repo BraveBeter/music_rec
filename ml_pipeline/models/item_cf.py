@@ -188,6 +188,14 @@ class ItemCF:
         with open(os.path.join(save_dir, "meta.json"), "w") as f:
             json.dump(meta, f)
 
+        # Save ID mappings so inference uses training-time indices
+        pd.DataFrame(list(self.user2idx.items()), columns=["user_id", "idx"]).to_parquet(
+            os.path.join(save_dir, "user2idx.parquet"), index=False
+        )
+        pd.DataFrame(list(self.track2idx.items()), columns=["track_id", "idx"]).to_parquet(
+            os.path.join(save_dir, "track2idx.parquet"), index=False
+        )
+
         logger.info(f"ItemCF model saved to {save_dir}")
 
     def load(self, path: str | None = None):
@@ -206,10 +214,18 @@ class ItemCF:
             sim_data = json.load(f)
         self.item_sim_topk = {int(k): [(int(i), s) for i, s in v] for k, v in sim_data.items()}
 
-        user2idx_df = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet"))
-        track2idx_df = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet"))
-        self.user2idx = {int(k): int(v) for k, v in user2idx_df.values}
-        self.track2idx = {str(k): int(v) for k, v in track2idx_df.values}
+        # Load ID mappings from model directory (training-time mapping)
+        saved_user = os.path.join(load_dir, "user2idx.parquet")
+        saved_track = os.path.join(load_dir, "track2idx.parquet")
+        if os.path.exists(saved_user) and os.path.exists(saved_track):
+            self.user2idx = dict(pd.read_parquet(saved_user).values)
+            self.track2idx = dict(pd.read_parquet(saved_track).values)
+        else:
+            # Fallback for models saved before this fix
+            user2idx_df = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet"))
+            track2idx_df = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet"))
+            self.user2idx = {int(k): int(v) for k, v in user2idx_df.values}
+            self.track2idx = {str(k): int(v) for k, v in track2idx_df.values}
         self.idx2track = {v: k for k, v in self.track2idx.items()}
 
         logger.info(f"ItemCF model loaded from {load_dir} "

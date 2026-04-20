@@ -18,6 +18,7 @@ import json
 import logging
 
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from ml_pipeline.config import PROCESSED_DATA_DIR, MODEL_DIR
@@ -276,9 +277,21 @@ def main(task_id: str | None = None):
         _phase("Evaluating DeepFM", phase_idx)
         _log("Evaluating DeepFM...")
         deepfm_data = _load_deepfm_data()
+
+        # Use training-time index mappings if saved alongside model
+        deepfm_model_dir = os.path.join(MODEL_DIR, "deepfm")
+        saved_user2idx_path = os.path.join(deepfm_model_dir, "user2idx.parquet")
+        saved_track2idx_path = os.path.join(deepfm_model_dir, "track2idx.parquet")
+        if os.path.exists(saved_user2idx_path) and os.path.exists(saved_track2idx_path):
+            eval_user2idx = dict(pd.read_parquet(saved_user2idx_path).values)
+            eval_track2idx = dict(pd.read_parquet(saved_track2idx_path).values)
+            _log("Using training-time index mappings from model directory")
+        else:
+            eval_user2idx, eval_track2idx = user2idx, track2idx
+
         deepfm_fn = _build_deepfm_fn(
             deepfm_data["feature_meta"], deepfm_data["user_features"], deepfm_data["item_features"],
-            user2idx, track2idx, top_k=20, candidate_pool_size=500,
+            eval_user2idx, eval_track2idx, top_k=20, candidate_pool_size=500,
         )
         results.append(evaluate_model(
             "DeepFM", deepfm_fn, test, all_interactions,

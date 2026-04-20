@@ -106,7 +106,7 @@ def list_history(limit: int = 50) -> list[dict]:
     all_runs = ProgressTracker.list_all_progress()
     history = [
         r for r in all_runs
-        if r.get("status") in ("completed", "error", "interrupted")
+        if r.get("status") in ("completed", "error", "interrupted", "cancelled")
         and r.get("task_type") != "evaluate"
     ]
     return history[:limit]

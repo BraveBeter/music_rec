@@ -27,6 +27,7 @@
           <div class="task-header">
             <span class="task-type">{{ formatType(task.task_type) }}</span>
             <StatusBadge :status="task.status as any" />
+            <button @click="openLog(task)" class="btn-log">日志</button>
             <button @click="store.cancelTask(task.task_id)" class="btn-cancel" v-if="task.status === 'running'">取消</button>
           </div>
           <template v-if="task.total_epochs > 0">
@@ -43,12 +44,6 @@
             <span v-if="task.best_val_loss !== null"> | Best: {{ task.best_val_loss?.toFixed(4) }}</span>
           </div>
         </div>
-      </div>
-
-      <!-- Log Panel (first active task) -->
-      <div class="log-section" v-if="firstActive">
-        <h3>训练日志</h3>
-        <LogPanel :lines="firstActive.log_lines || []" />
       </div>
     </section>
 
@@ -67,7 +62,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="h in store.history" :key="h.task_id">
+          <tr v-for="h in store.history" :key="h.task_id" class="clickable-row" @click="openLog(h)">
             <td>{{ formatType(h.task_type) }}</td>
             <td>{{ formatTime(h.started_at) }}</td>
             <td>{{ duration(h.started_at, h.completed_at) }}</td>
@@ -77,15 +72,24 @@
         </tbody>
       </table>
     </section>
+
+    <LogDialog
+      v-if="logVisible"
+      :title="logTitle"
+      :lines="logLines"
+      :status="logStatus"
+      @close="logVisible = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import ProgressBar from '@/components/ProgressBar.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import LogPanel from '@/components/LogPanel.vue'
+import LogDialog from '@/components/LogDialog.vue'
 import { useTrainingStore } from '@/stores/training'
+import type { TaskProgress } from '@/stores/training'
 
 const store = useTrainingStore()
 
@@ -133,6 +137,19 @@ async function startOne(action: string) {
 
 async function startAll() {
   await store.startTrainAll()
+}
+
+// Log dialog
+const logVisible = ref(false)
+const logTitle = ref('')
+const logLines = ref<string[]>([])
+const logStatus = ref<string | undefined>()
+
+function openLog(task: TaskProgress) {
+  logTitle.value = formatType(task.task_type) + ' — 训练日志'
+  logLines.value = task.log_lines || []
+  logStatus.value = task.status
+  logVisible.value = true
 }
 
 onMounted(() => {
@@ -205,11 +222,23 @@ onUnmounted(() => {
   font-size: 0.75rem;
 }
 .btn-cancel:hover { background: #ff6b6b22; }
+.btn-log {
+  background: none;
+  border: 1px solid #60a5fa;
+  color: #60a5fa;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.btn-log:hover { background: #60a5fa22; }
 .epoch-text, .phase-text { font-size: 0.8rem; color: #a0a0b0; margin-top: 0.3rem; }
 .metrics { font-size: 0.8rem; color: #60a5fa; margin-top: 0.3rem; }
 
-.log-section { margin-top: 1rem; }
 .empty { color: #4a4a6a; font-size: 0.9rem; padding: 0.5rem 0; }
+
+.clickable-row { cursor: pointer; }
+.clickable-row:hover { background: #1a2a4e; }
 
 .history-table {
   width: 100%;

@@ -106,6 +106,7 @@
       :title="logTitle"
       :lines="logLines"
       :status="logStatus"
+      :report="logReport"
       @close="logVisible = false"
     />
   </div>
@@ -115,7 +116,7 @@
 import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LogDialog from '@/components/LogDialog.vue'
-import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress } from '@/api/admin'
+import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress, getEvalReport } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 
 interface ModelInfo {
@@ -310,11 +311,25 @@ const logVisible = ref(false)
 const logTitle = ref('')
 const logLines = ref<string[]>([])
 const logStatus = ref<string | undefined>()
+const logReport = ref<any[]>([])
 
-function openEvalLog(task: any) {
+async function openEvalLog(task: any) {
   logTitle.value = '模型评测 — 日志'
   logLines.value = task.log_lines || []
   logStatus.value = task.status
+  logReport.value = []
+
+  // For completed tasks, fetch the per-task report
+  if (['completed'].includes(task.status) && task.task_id) {
+    try {
+      const { data } = await getEvalReport(task.task_id)
+      if (data.results) {
+        logReport.value = data.results
+        logTitle.value = '模型评测'
+      }
+    } catch { /* ignore */ }
+  }
+
   logVisible.value = true
 }
 

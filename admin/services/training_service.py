@@ -101,6 +101,16 @@ def list_eval_history(limit: int = 50) -> list[dict]:
     return history[:limit]
 
 
+def get_eval_report(task_id: str) -> dict:
+    """Read per-task evaluation report JSON."""
+    import json as _json
+    path = os.path.join(EVAL_PROGRESS_DIR, f"{task_id}_report.json")
+    if not os.path.exists(path):
+        return {"error": "not_found", "task_id": task_id}
+    with open(path) as f:
+        return {"task_id": task_id, "results": _json.load(f)}
+
+
 def list_history(limit: int = 50) -> list[dict]:
     """Return completed/interrupted/error training runs (most recent first). Excludes evaluation tasks."""
     all_runs = ProgressTracker.list_all_progress()

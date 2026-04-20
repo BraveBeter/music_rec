@@ -137,3 +137,9 @@ async def list_eval_progress(admin: User = Depends(get_admin_user)):
 async def eval_history(limit: int = Query(50, ge=1, le=200), admin: User = Depends(get_admin_user)):
     """Get completed evaluation history."""
     return {"history": training_service.list_eval_history(limit)}
+
+
+@router.get("/eval-report/{task_id}")
+async def get_eval_report(task_id: str, admin: User = Depends(get_admin_user)):
+    """Get evaluation results for a specific task."""
+    return training_service.get_eval_report(task_id)

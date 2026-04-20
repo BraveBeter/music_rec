@@ -335,6 +335,15 @@ def main(task_id: str | None = None):
 
     _log(f"Report saved to {report_path}")
     _log(f"JSON saved to {json_path}")
+
+    # Save per-task report so each evaluation run keeps its own results
+    if task_id:
+        os.makedirs(EVAL_PROGRESS_DIR, exist_ok=True)
+        task_report_path = os.path.join(EVAL_PROGRESS_DIR, f"{task_id}_report.json")
+        with open(task_report_path, "w") as f:
+            json.dump(results, f, indent=2, default=str)
+        _log(f"Task report saved to {task_report_path}")
+
     _log("Done!")
 
     if tracker:

@@ -9,14 +9,43 @@
             <button class="btn-close" @click="close">&times;</button>
           </div>
         </div>
+
+        <!-- Tabs when report data is provided -->
+        <div class="dialog-tabs" v-if="reportRows.length > 0">
+          <button :class="['tab', activeTab === 'log' && 'active']" @click="activeTab = 'log'">日志</button>
+          <button :class="['tab', activeTab === 'result' && 'active']" @click="activeTab = 'result'">结果</button>
+        </div>
+
         <div class="dialog-body">
-          <div v-if="metrics && Object.keys(metrics).length" class="metrics-section">
-            <div class="metric-item" v-for="(val, key) in metrics" :key="key">
-              <span class="metric-key">{{ key }}</span>
-              <span class="metric-val">{{ typeof val === 'number' ? val.toFixed(4) : val }}</span>
+          <!-- Results table -->
+          <div v-if="activeTab === 'result' && reportRows.length > 0" class="result-section">
+            <div class="table-wrapper">
+              <table class="result-table">
+                <thead>
+                  <tr>
+                    <th>模型</th>
+                    <th v-for="col in reportColumns" :key="col">{{ col }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in reportRows" :key="row.model">
+                    <td class="model-cell">{{ modelLabels[row.model] || row.model }}</td>
+                    <td v-for="col in reportColumns" :key="col">
+                      <span v-if="row[col] !== undefined" class="metric-val">
+                        {{ typeof row[col] === 'number' ? row[col].toFixed(4) : row[col] }}
+                      </span>
+                      <span v-else class="metric-na">-</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
-          <LogPanel :lines="lines" />
+
+          <!-- Log panel -->
+          <div v-if="activeTab === 'log'">
+            <LogPanel :lines="lines" />
+          </div>
         </div>
       </div>
     </div>
@@ -24,18 +53,49 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
 import LogPanel from './LogPanel.vue'
 import StatusBadge from './StatusBadge.vue'
 
-defineProps<{
+const props = defineProps<{
   title: string
   lines: string[]
   status?: string
-  metrics?: Record<string, any>
+  report?: any[]  // evaluation results array from per-task report JSON
 }>()
 
 const emit = defineEmits<{ close: [] }>()
 function close() { emit('close') }
+
+const activeTab = ref<'log' | 'result'>(
+  props.report && props.report.length > 0 ? 'result' : 'log'
+)
+
+const modelLabels: Record<string, string> = {
+  itemcf: 'ItemCF',
+  item_cf: 'ItemCF',
+  deepfm: 'DeepFM',
+  sasrec: 'SASRec',
+  multi_recall_funnel: 'Multi-recall Funnel',
+}
+
+// Extract unique metric keys from report rows
+const reportColumns = computed(() => {
+  if (!props.report || props.report.length === 0) return []
+  const keys = new Set<string>()
+  for (const row of props.report) {
+    for (const k of Object.keys(row)) {
+      if (k !== 'model' && typeof row[k] === 'number') keys.add(k)
+    }
+  }
+  return Array.from(keys)
+})
+
+// Flatten report rows for the table
+const reportRows = computed(() => {
+  if (!props.report) return []
+  return props.report.map(r => ({ model: r.model, ...r }))
+})
 </script>
 
 <style scoped>
@@ -53,7 +113,7 @@ function close() { emit('close') }
   border: 1px solid #2a2a4a;
   border-radius: 12px;
   width: 90%;
-  max-width: 800px;
+  max-width: 900px;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
@@ -85,21 +145,55 @@ function close() { emit('close') }
   padding: 0;
 }
 .btn-close:hover { color: #e0e0e0; }
+
+/* Tabs */
+.dialog-tabs {
+  display: flex;
+  border-bottom: 1px solid #2a2a4a;
+  padding: 0 1.25rem;
+}
+.tab {
+  background: none;
+  border: none;
+  color: #a0a0b0;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  font-size: 0.88rem;
+  border-bottom: 2px solid transparent;
+}
+.tab:hover { color: #e0e0e0; }
+.tab.active {
+  color: #60a5fa;
+  border-bottom-color: #60a5fa;
+}
+
 .dialog-body {
   padding: 1rem 1.25rem;
   overflow-y: auto;
   flex: 1;
 }
-.metrics-section {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  margin-bottom: 1rem;
-  padding: 0.75rem;
-  background: #0f3460;
-  border-radius: 8px;
+
+/* Result table */
+.result-section { margin-bottom: 0.5rem; }
+.table-wrapper { overflow-x: auto; }
+.result-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
 }
-.metric-item { font-size: 0.82rem; }
-.metric-key { color: #a0a0b0; margin-right: 0.4rem; }
+.result-table th {
+  text-align: left;
+  padding: 0.45rem 0.5rem;
+  color: #a0a0b0;
+  border-bottom: 1px solid #2a2a4a;
+  white-space: nowrap;
+}
+.result-table td {
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid #1a1a3e;
+  white-space: nowrap;
+}
+.model-cell { font-weight: 600; color: #e0e0e0; }
 .metric-val { color: #60a5fa; font-variant-numeric: tabular-nums; }
+.metric-na { color: #4a4a6a; }
 </style>

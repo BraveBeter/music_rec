@@ -88,7 +88,7 @@ def list_eval_progress() -> list[dict]:
 
 def list_eval_active() -> list[dict]:
     """Return active evaluation tasks."""
-    return [p for p in list_eval_progress() if p.get("status") == "running"]
+    return [p for p in list_eval_progress() if isinstance(p, dict) and p.get("status") == "running"]
 
 
 def list_eval_history(limit: int = 50) -> list[dict]:
@@ -96,7 +96,7 @@ def list_eval_history(limit: int = 50) -> list[dict]:
     all_runs = list_eval_progress()
     history = [
         r for r in all_runs
-        if r.get("status") in ("completed", "error", "interrupted", "cancelled")
+        if isinstance(r, dict) and r.get("status") in ("completed", "error", "interrupted", "cancelled")
     ]
     return history[:limit]
 

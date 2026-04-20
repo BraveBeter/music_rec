@@ -8,12 +8,12 @@
       <div class="controls">
         <button v-for="s in steps" :key="s.action"
           @click="startOne(s.action)"
-          :disabled="isAnyRunning || s.running"
+          :disabled="isAnyRunning || store.pipelineRunning"
           class="btn-step"
         >
           {{ s.name }}
         </button>
-        <button @click="startAll" :disabled="isAnyRunning" class="btn-all">
+        <button @click="startAll" :disabled="isAnyRunning || store.pipelineRunning" class="btn-all">
           一键全流程训练
         </button>
       </div>

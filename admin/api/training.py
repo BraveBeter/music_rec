@@ -57,13 +57,39 @@ async def train_deepfm(admin: User = Depends(get_admin_user)):
 
 @router.post("/train-all")
 async def train_all(admin: User = Depends(get_admin_user)):
-    """Run full training pipeline: preprocess + all models."""
-    results = []
-    # Sequential: preprocess first, then models
-    for name in ["preprocess", "train_baseline", "train_sasrec", "train_deepfm"]:
-        result = await training_service.start_training(name, MODULE_MAP[name])
-        results.append(result)
-    return {"status": "started", "tasks": results}
+    """Run full training pipeline sequentially: each step waits for the previous to complete."""
+    import asyncio
+
+    pipeline = ["preprocess", "feature_engineering", "train_baseline", "train_sasrec", "train_deepfm"]
+
+    # Start first task immediately so frontend gets a task_id to subscribe to
+    first_result = await training_service.start_training(pipeline[0], MODULE_MAP[pipeline[0]])
+    first_tid = first_result.get("task_id", "")
+
+    # Run the rest of the pipeline sequentially in background
+    async def _run_pipeline():
+        # Wait for first task
+        prev_tid = first_tid
+        for name in pipeline[1:]:
+            # Wait for previous task to finish
+            while True:
+                progress = training_service.get_progress(prev_tid)
+                if progress and progress.get("status") in ("completed", "error", "interrupted", "cancelled"):
+                    break
+                await asyncio.sleep(2)
+
+            # Check if previous step succeeded
+            prev_progress = training_service.get_progress(prev_tid)
+            if prev_progress and prev_progress.get("status") != "completed":
+                logger.warning(f"Pipeline stopped: step before '{name}' ended with status {prev_progress.get('status')}")
+                break
+
+            # Start next step
+            result = await training_service.start_training(name, MODULE_MAP[name])
+            prev_tid = result.get("task_id", "")
+
+    asyncio.create_task(_run_pipeline())
+    return {"status": "started", "tasks": [first_result]}
 
 
 @router.post("/evaluate")

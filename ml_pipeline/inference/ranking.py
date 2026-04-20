@@ -88,8 +88,15 @@ def _load_features():
     try:
         _user_features = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user_features.parquet"))
         _item_features = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "item_features.parquet"))
-        _user2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet")).values)
-        _track2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet")).values)
+        # Use training-time index mappings if saved alongside model
+        saved_user = os.path.join(MODEL_DIR, "deepfm", "user2idx.parquet")
+        saved_track = os.path.join(MODEL_DIR, "deepfm", "track2idx.parquet")
+        if os.path.exists(saved_user) and os.path.exists(saved_track):
+            _user2idx = dict(pd.read_parquet(saved_user).values)
+            _track2idx = dict(pd.read_parquet(saved_track).values)
+        else:
+            _user2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet")).values)
+            _track2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet")).values)
         logger.info(f"Loaded features: {len(_user_features)} users, {len(_item_features)} items")
     except Exception as e:
         logger.warning(f"Failed to load features: {e}")

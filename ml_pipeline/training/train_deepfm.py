@@ -74,6 +74,14 @@ def main():
     # Save model
     deepfm.save()
 
+    # Save ID mappings alongside model so evaluation uses training-time indices
+    import shutil
+    model_dir = os.path.join(MODEL_DIR, "deepfm")
+    for mapping_file in ["user2idx.parquet", "track2idx.parquet"]:
+        src = os.path.join(PROCESSED_DATA_DIR, mapping_file)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(model_dir, mapping_file))
+
     # Export ONNX
     try:
         deepfm.export_onnx()

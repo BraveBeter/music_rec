@@ -31,6 +31,7 @@ export const useTrainingStore = defineStore('training', () => {
   const activeTasks = ref<Record<string, TaskProgress>>({})
   const history = ref<TaskProgress[]>([])
   const eventSources = ref<Record<string, EventSource>>({})
+  const pipelineRunning = ref(false)
 
   const triggerMap: Record<string, () => Promise<any>> = {
     preprocess: runPreprocess,
@@ -56,6 +57,7 @@ export const useTrainingStore = defineStore('training', () => {
   }
 
   async function startTrainAll(): Promise<string[]> {
+    pipelineRunning.value = true
     const { data } = await trainAll()
     const taskIds: string[] = []
     if (data.tasks) {
@@ -65,6 +67,10 @@ export const useTrainingStore = defineStore('training', () => {
           taskIds.push(t.task_id)
         }
       }
+    }
+    // If no tasks returned (unexpected), clear flag immediately
+    if (taskIds.length === 0) {
+      pipelineRunning.value = false
     }
     return taskIds
   }
@@ -84,6 +90,15 @@ export const useTrainingStore = defineStore('training', () => {
 
         if (['completed', 'error', 'interrupted', 'cancelled'].includes(progress.status)) {
           unsubscribeFromTask(taskId)
+          if (pipelineRunning.value) {
+            // Wait for backend to start next pipeline step before checking
+            setTimeout(async () => {
+              await fetchActiveTasks()
+              if (!Object.values(activeTasks.value).some(t => t.status === 'running')) {
+                pipelineRunning.value = false
+              }
+            }, 8000)
+          }
         }
       } catch { /* ignore parse errors */ }
     }
@@ -139,7 +154,7 @@ export const useTrainingStore = defineStore('training', () => {
   }
 
   return {
-    activeTasks, history, eventSources,
+    activeTasks, history, eventSources, pipelineRunning,
     startTraining, startTrainAll,
     subscribeToTask, unsubscribeFromTask,
     cancelTask, fetchHistory, fetchActiveTasks, cleanup,

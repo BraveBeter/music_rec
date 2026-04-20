@@ -410,6 +410,11 @@ class SASRecRecommender:
         with open(os.path.join(save_dir, "meta.json"), "w") as f:
             json.dump(meta, f, indent=2)
 
+        # Save track2idx mapping so inference uses training-time indices
+        pd.DataFrame(list(self.track2idx.items()), columns=["track_id", "idx"]).to_parquet(
+            os.path.join(save_dir, "track2idx.parquet"), index=False
+        )
+
         logger.info(f"SASRec model saved to {save_dir}")
 
     def load(self, path: str | None = None):
@@ -418,9 +423,14 @@ class SASRecRecommender:
         with open(os.path.join(load_dir, "meta.json")) as f:
             meta = json.load(f)
 
-        # Reload ID mappings
-        track2idx_df = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet"))
-        self.track2idx = dict(track2idx_df.values)
+        # Load track2idx from model directory (training-time mapping)
+        saved_path = os.path.join(load_dir, "track2idx.parquet")
+        if os.path.exists(saved_path):
+            self.track2idx = dict(pd.read_parquet(saved_path).values)
+        else:
+            # Fallback for models saved before this fix
+            track2idx_df = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet"))
+            self.track2idx = dict(track2idx_df.values)
         self.idx2track = {v: k for k, v in self.track2idx.items()}
 
         self.hidden_dim = meta["hidden_dim"]

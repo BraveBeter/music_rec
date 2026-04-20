@@ -79,26 +79,27 @@ def _load_deepfm_data():
     return data
 
 
-def _model_available(name: str) -> bool:
-    return os.path.exists(os.path.join(MODEL_DIR, name, "meta.json"))
+def _model_available(name: str, model_dir: str = None) -> bool:
+    base = model_dir or MODEL_DIR
+    return os.path.exists(os.path.join(base, name, "meta.json"))
 
 
-def _build_itemcf_fn(top_k=20):
+def _build_itemcf_fn(top_k=20, model_dir=None):
     from ml_pipeline.models.item_cf import ItemCF
     logger.info("Loading ItemCF model...")
     model = ItemCF()
-    model.load()
+    model.load(path=model_dir)
 
     def recommend(user_id):
         return model.recommend(user_id, top_k=top_k)
     return recommend
 
 
-def _build_sasrec_fn(train_df, top_k=20):
+def _build_sasrec_fn(train_df, top_k=20, model_dir=None):
     from ml_pipeline.models.sasrec import SASRecRecommender
     logger.info("Loading SASRec model...")
     model = SASRecRecommender()
-    model.load()
+    model.load(path=model_dir)
 
     train_plays = train_df[train_df["interaction_type"].isin([1, 2])].sort_values("created_at")
     user_train_seqs = train_plays.groupby("user_id")["track_id"].apply(list).to_dict()
@@ -112,11 +113,12 @@ def _build_sasrec_fn(train_df, top_k=20):
 
 
 def _build_deepfm_fn(feature_meta, user_features, item_features,
-                     user2idx, track2idx, top_k=20, candidate_pool_size=500):
+                     user2idx, track2idx, top_k=20, candidate_pool_size=500,
+                     model_dir=None):
     from ml_pipeline.models.deepfm import DeepFMRecommender
     logger.info("Loading DeepFM model...")
     model = DeepFMRecommender()
-    model.load()
+    model.load(path=model_dir)
 
     # Use model's own feature metadata for alignment with trained weights
     sparse_features = model.sparse_features
@@ -207,7 +209,8 @@ def _build_funnel_fn(train_df, top_k=20):
     return recommend_fn
 
 
-def main(task_id: str | None = None):
+def main(task_id: str | None = None, model_filter: str | None = None,
+         version_dir: str | None = None):
     try:
         import torch
         torch.manual_seed(42)
@@ -215,9 +218,27 @@ def main(task_id: str | None = None):
         pass
     np.random.seed(42)
 
-    # Determine models to evaluate for progress tracking
-    available_models = [n for n in ["item_cf", "deepfm", "sasrec"] if _model_available(n)]
-    total_phases = len(available_models) + (1 if available_models else 0)  # models + funnel
+    # Determine which model directory to load from
+    # version_dir points directly at a version directory (e.g. data/model_versions/item_cf/xxx)
+    # which already contains the model files (meta.json, etc.)
+    effective_model_dir = version_dir if version_dir else MODEL_DIR
+
+    # Determine models to evaluate
+    all_model_names = ["item_cf", "deepfm", "sasrec"]
+    eval_funnel_only = model_filter == "funnel"
+
+    if model_filter and model_filter not in ("all", "funnel"):
+        if version_dir:
+            # version_dir IS the model directory, check meta.json directly
+            eval_models = [model_filter] if os.path.exists(os.path.join(version_dir, "meta.json")) else []
+        else:
+            eval_models = [model_filter] if _model_available(model_filter, effective_model_dir) else []
+    elif eval_funnel_only:
+        eval_models = []  # Only evaluate funnel, skip individual models
+    else:
+        eval_models = [n for n in all_model_names if _model_available(n, effective_model_dir)]
+
+    total_phases = len(eval_models) + (1 if eval_models or eval_funnel_only else 0)  # models + funnel
 
     tracker = None
     if task_id:
@@ -235,10 +256,13 @@ def main(task_id: str | None = None):
             tracker.update_phase(name, idx)
 
     _log("=" * 60)
-    _log("Evaluating trained models (no retraining)")
+    if model_filter and model_filter != "all":
+        _log(f"Evaluating model: {model_filter}" + (f" (version: {version_dir})" if version_dir else ""))
+    else:
+        _log("Evaluating trained models (no retraining)")
     _log("=" * 60)
 
-    eval_deepfm = _model_available("deepfm")
+    eval_deepfm = "deepfm" in eval_models
     missing = _check_data(eval_deepfm)
     if missing:
         msg = f"Missing preprocessed data files: {', '.join(missing)}"
@@ -258,19 +282,20 @@ def main(task_id: str | None = None):
     results = []
     phase_idx = 0
 
-    # Evaluate each available model
-    if _model_available("item_cf"):
+    # Evaluate each selected model
+    if "item_cf" in eval_models:
         phase_idx += 1
         _phase("Evaluating ItemCF", phase_idx)
         _log("Evaluating ItemCF...")
-        itemcf_fn = _build_itemcf_fn(top_k=20)
+        # version_dir IS the model directory; otherwise use default (None lets model.load() use its default)
+        itemcf_fn = _build_itemcf_fn(top_k=20, model_dir=version_dir)
         results.append(evaluate_model(
             "ItemCF", itemcf_fn, test, all_interactions,
             k_values=k_values, num_items=num_items,
         ))
         _log("ItemCF done")
     else:
-        _log("ItemCF model not found, skipping")
+        _log("ItemCF model not found or not selected, skipping")
 
     if eval_deepfm:
         phase_idx += 1
@@ -279,7 +304,8 @@ def main(task_id: str | None = None):
         deepfm_data = _load_deepfm_data()
 
         # Use training-time index mappings if saved alongside model
-        deepfm_model_dir = os.path.join(MODEL_DIR, "deepfm")
+        # For version evaluation, mappings are in version_dir directly
+        deepfm_model_dir = version_dir or os.path.join(MODEL_DIR, "deepfm")
         saved_user2idx_path = os.path.join(deepfm_model_dir, "user2idx.parquet")
         saved_track2idx_path = os.path.join(deepfm_model_dir, "track2idx.parquet")
         if os.path.exists(saved_user2idx_path) and os.path.exists(saved_track2idx_path):
@@ -292,6 +318,7 @@ def main(task_id: str | None = None):
         deepfm_fn = _build_deepfm_fn(
             deepfm_data["feature_meta"], deepfm_data["user_features"], deepfm_data["item_features"],
             eval_user2idx, eval_track2idx, top_k=20, candidate_pool_size=500,
+            model_dir=version_dir,
         )
         results.append(evaluate_model(
             "DeepFM", deepfm_fn, test, all_interactions,
@@ -299,33 +326,34 @@ def main(task_id: str | None = None):
         ))
         _log("DeepFM done")
     else:
-        _log("DeepFM model not found, skipping")
+        _log("DeepFM model not found or not selected, skipping")
 
-    if _model_available("sasrec"):
+    if "sasrec" in eval_models:
         phase_idx += 1
         _phase("Evaluating SASRec", phase_idx)
         _log("Evaluating SASRec...")
-        sasrec_fn = _build_sasrec_fn(train, top_k=20)
+        sasrec_fn = _build_sasrec_fn(train, top_k=20, model_dir=version_dir)
         results.append(evaluate_model(
             "SASRec", sasrec_fn, test, all_interactions,
             k_values=k_values, num_items=num_items,
         ))
         _log("SASRec done")
     else:
-        _log("SASRec model not found, skipping")
+        _log("SASRec model not found or not selected, skipping")
 
-    # Funnel evaluation (requires at least one model)
-    available_any = _model_available("item_cf") or _model_available("deepfm") or _model_available("sasrec")
-    if available_any:
-        phase_idx += 1
-        _phase("Evaluating Multi-recall Funnel", phase_idx)
-        _log("Evaluating Multi-recall Funnel...")
-        funnel_fn = _build_funnel_fn(train, top_k=20)
-        results.append(evaluate_model(
-            "Multi-recall Funnel", funnel_fn, test, all_interactions,
-            k_values=k_values, num_items=num_items,
-        ))
-        _log("Funnel done")
+    # Funnel evaluation (using all production models)
+    if not version_dir and (eval_models or eval_funnel_only):
+        available_any = any(_model_available(n) for n in ["item_cf", "deepfm", "sasrec"])
+        if available_any:
+            phase_idx += 1
+            _phase("Evaluating Multi-recall Funnel", phase_idx)
+            _log("Evaluating Multi-recall Funnel...")
+            funnel_fn = _build_funnel_fn(train, top_k=20)
+            results.append(evaluate_model(
+                "Multi-recall Funnel", funnel_fn, test, all_interactions,
+                k_values=k_values, num_items=num_items,
+            ))
+            _log("Funnel done")
 
     if not results:
         _log("No trained models found. Train at least one model first.")
@@ -366,5 +394,11 @@ def main(task_id: str | None = None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--task-id", default=None)
+    parser.add_argument("--model", default=None,
+                        choices=["all", "item_cf", "deepfm", "sasrec", "funnel"],
+                        help="Model to evaluate (default: all)")
+    parser.add_argument("--version-dir", default=None,
+                        help="Path to a specific model version directory "
+                             "(e.g. data/model_versions/item_cf/train_baseline_xxx)")
     args = parser.parse_args()
-    main(task_id=args.task_id)
+    main(task_id=args.task_id, model_filter=args.model, version_dir=args.version_dir)

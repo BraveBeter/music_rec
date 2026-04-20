@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import logging
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -84,6 +85,22 @@ def main():
     )
     results.append(item_cf_result)
     logger.info(f"ItemCF results: {item_cf_result}")
+
+    # Version management: save version + compare + promote
+    version_id = task_id or f"train_baseline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from ml_pipeline.models.versioning import ModelRegistry
+    registry = ModelRegistry()
+    registry.save_version_artifacts("item_cf", version_id)
+    registry.register_version("item_cf", version_id, item_cf_result)
+    promoted = registry.compare_and_promote("item_cf", version_id, item_cf_result)
+    if promoted:
+        logger.info("ItemCF: new version promoted to production")
+        if tracker:
+            tracker.append_log("ItemCF: promoted (NDCG@10 improved)")
+    else:
+        logger.info("ItemCF: new version rejected (NDCG@10 did not improve)")
+        if tracker:
+            tracker.append_log("ItemCF: rejected (NDCG@10 did not improve)")
 
     if tracker:
         tracker.append_log(f"ItemCF done. Metrics: {item_cf_result}")

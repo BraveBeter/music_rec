@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import logging
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -184,6 +185,22 @@ def main():
     )
 
     logger.info(f"SASRec results: {sasrec_result}")
+
+    # Version management: save version + compare + promote
+    version_id = task_id or f"train_sasrec_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from ml_pipeline.models.versioning import ModelRegistry
+    registry = ModelRegistry()
+    registry.save_version_artifacts("sasrec", version_id)
+    registry.register_version("sasrec", version_id, sasrec_result)
+    promoted = registry.compare_and_promote("sasrec", version_id, sasrec_result)
+    if promoted:
+        logger.info("SASRec: new version promoted to production")
+        if tracker:
+            tracker.append_log("SASRec: promoted (NDCG@10 improved)")
+    else:
+        logger.info("SASRec: new version rejected (NDCG@10 did not improve)")
+        if tracker:
+            tracker.append_log("SASRec: rejected (NDCG@10 did not improve)")
 
     report_path = os.path.join(MODEL_DIR, "sasrec_report.json")
     with open(report_path, "w") as f:

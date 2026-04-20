@@ -161,7 +161,7 @@ class ProgressTracker:
             if not os.path.isdir(d):
                 continue
             for fname in sorted(os.listdir(d), reverse=True):
-                if not fname.endswith(".json"):
+                if not fname.endswith(".json") or fname.endswith("_report.json"):
                     continue
                 path = os.path.join(d, fname)
                 try:

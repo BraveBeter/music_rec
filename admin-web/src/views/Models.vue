@@ -41,11 +41,9 @@
         <div class="progress-header">
           <span class="progress-phase">{{ evalProgress.current_phase || '正在评测...' }}</span>
           <StatusBadge :status="evalProgress.status === 'running' ? 'running' : 'completed'" />
+          <button @click="openEvalLog(evalProgress)" class="btn-log">日志</button>
         </div>
         <div v-if="evalProgress.error" class="eval-error">{{ evalProgress.error }}</div>
-        <div v-if="evalProgress.log_lines && evalProgress.log_lines.length" class="log-panel">
-          <div v-for="(line, i) in evalProgress.log_lines.slice(-15)" :key="i" class="log-line">{{ line }}</div>
-        </div>
       </div>
 
       <!-- Results table -->
@@ -93,7 +91,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="h in evalHistory" :key="h.task_id">
+          <tr v-for="h in evalHistory" :key="h.task_id" class="clickable-row" @click="openEvalLog(h)">
             <td><StatusBadge :status="h.status as any" /></td>
             <td>{{ formatTime(h.started_at) }}</td>
             <td>{{ duration(h.started_at, h.completed_at) }}</td>
@@ -102,13 +100,23 @@
         </tbody>
       </table>
     </section>
+
+    <LogDialog
+      v-if="logVisible"
+      :title="logTitle"
+      :lines="logLines"
+      :status="logStatus"
+      :report="logReport"
+      @close="logVisible = false"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import StatusBadge from '@/components/StatusBadge.vue'
-import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress } from '@/api/admin'
+import LogDialog from '@/components/LogDialog.vue'
+import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress, getEvalReport } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 
 interface ModelInfo {
@@ -298,6 +306,33 @@ function formatReport(report: Record<string, any>) {
     .join(', ')
 }
 
+// Log dialog
+const logVisible = ref(false)
+const logTitle = ref('')
+const logLines = ref<string[]>([])
+const logStatus = ref<string | undefined>()
+const logReport = ref<any[]>([])
+
+async function openEvalLog(task: any) {
+  logTitle.value = '模型评测 — 日志'
+  logLines.value = task.log_lines || []
+  logStatus.value = task.status
+  logReport.value = []
+
+  // For completed tasks, fetch the per-task report
+  if (['completed'].includes(task.status) && task.task_id) {
+    try {
+      const { data } = await getEvalReport(task.task_id)
+      if (data.results) {
+        logReport.value = data.results
+        logTitle.value = '模型评测'
+      }
+    } catch { /* ignore */ }
+  }
+
+  logVisible.value = true
+}
+
 onMounted(refresh)
 onUnmounted(closeEventSource)
 </script>
@@ -373,6 +408,16 @@ onUnmounted(closeEventSource)
   gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
+.btn-log {
+  background: none;
+  border: 1px solid #60a5fa;
+  color: #60a5fa;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.btn-log:hover { background: #60a5fa22; }
 .progress-phase { font-size: 0.9rem; color: #e0e0e0; }
 .eval-error {
   color: #ff6b6b;
@@ -435,4 +480,6 @@ onUnmounted(closeEventSource)
   padding: 0.5rem;
   border-bottom: 1px solid #1a1a3e;
 }
+.clickable-row { cursor: pointer; }
+.clickable-row:hover { background: #1a2a4e; }
 </style>

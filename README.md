@@ -1,6 +1,6 @@
 <div align="center">
-  <h1>🎵 个性化音乐推荐系统 (Music Recommendation System)</h1>
-  <p>一个包含完整推荐链路、多级容灾降级的工业级个性化音乐推荐引擎</p>
+  <h1>个性化音乐推荐系统</h1>
+  <p>包含完整推荐链路、多级容灾降级、管理后台与模型评测的工业级个性化音乐推荐引擎</p>
 
   <p>
     <img src="https://img.shields.io/badge/Frontend-Vue%203%20%7C%20Vite-42b883?style=flat-square&logo=vuedotjs" alt="Vue 3">
@@ -12,75 +12,125 @@
 
 ---
 
-## 📖 项目简介
+## 项目简介
 
-真正的工业级推荐架构并非简单调用一个深度学习黑盒算法，而是囊括**“提召排”（提取、召回、排序）**和降级防抖的高可用系统。
+工业级推荐架构并非简单调用一个深度学习黑盒算法，而是囊括**召回、排序、重排**和降级防抖的高可用系统。
 
-本项目利用 `FastAPI` (原生异步机制) 搭配 `Vue 3` 构建强交互前台，并融合了从 **流行度冷启动**、**离线托底** 到 **多路召回 (ItemCF + SASRec)** 与 **深度模型张量排序 (DeepFM / ONNX)** 的全栈式混合推荐管线。在保证代码高内聚低耦合的基础上极大地拔高了服务吞吐阈值。
+本项目利用 FastAPI 原生异步机制搭配 Vue 3 构建强交互前台，融合从流行度冷启动、离线托底到多路召回（ItemCF + SASRec + Tag + Genre-Popularity）与深度模型排序（DeepFM）的全栈式混合推荐管线，并使用 MMR 多样性重排提升推荐体验。系统还包含完整的管理后台，支持实时训练可视化、模型评测对比、定时调度等功能。
 
-## ✨ 核心特性
+## 核心特性
 
-- **🚀 异步极速流转**：摒弃传统同步框架。系统连接池基于 `aiomysql`，全面解耦 I/O 阻塞；借助 Redis 的 `LPUSH`，达到单次毫秒级听歌历史流水构建。
-- **🧠 现代“双曲塔”推理引擎**：纯源生整合了 `ItemCF`（协同过滤）、`SASRec`（自注意力历史特征序列表达）与 `DeepFM`（深层神经元特征切面网络），精确捕获用户“显性”和“隐形”的兴趣意图。
-- **🛡️ 坚不可摧的降级分流架构 (Fallback)**：推荐中枢设有多达 L1-L4 的防断层护城河：Redis 短期缓存缓冲 $\rightarrow$ ML 双路推演 $\rightarrow$ 离线 SQL 兜底 $\rightarrow$ 全球热榜强制冷启动。不管并发灾难多严重，你的系统永不报 404！
-- **👥 真实的合成沙盒支持**：搭载了 `generate_synthetic_data` 矩阵算法合成机。不需你辛苦埋点，系统自动化利用伪高斯生成 60 位具象化偏好的听众并播下 300,000+ 的测试数据记录用以练就原始神经模型。
+- **异步全栈**：基于 `aiomysql` 的连接池全面解耦 I/O 阻塞，Redis `LPUSH` 实现毫秒级听歌历史序列构建
+- **多路召回 + 深度排序**：整合 ItemCF（协同过滤）、SASRec（自注意力序列）、Tag-based、Genre-aware 多路召回，DeepFM 精排 + MMR 多样性重排
+- **四级降级兜底**：Redis 缓存 → ML 实时推演 → 离线预计算 → 全球热榜冷启动
+- **管理后台**：侧边栏布局，支持数据导入、实时训练进度（SSE）、模型评测指标对比、定时调度（Cron/Interval/阈值触发）
+- **多数据源**：Deezer 30s 试听、Jamendo 完整流媒体、LastFM 1K 真实用户数据、合成数据生成器
+- **曲风浏览与歌手系统**：按曲风随机推荐/热榜排行、歌手详情页、收藏管理
+
+## 技术栈
+
+| 模块 | 技术选型 | 说明 |
+| :---: | :---: | :--- |
+| **用户前端** | Vue 3 + Vite + Pinia | Composition API，Composition API，深色主题播放器 |
+| **管理前端** | Vue 3 + Vite + Pinia | 侧边栏布局，SSE 实时进度，模型评测对比 |
+| **用户后端** | FastAPI + SQLAlchemy | JWT 认证，异步 I/O，音频代理 |
+| **管理后端** | FastAPI + APScheduler | 训练编排，SSE 进度流，定时调度 |
+| **数据库** | MySQL 8 + Redis 7 | MySQL 持久存储，Redis 缓存 + 序列 |
+| **ML 管线** | PyTorch + Scikit-learn | ItemCF, SASRec, DeepFM, 特征工程, 评测框架 |
 
 ---
 
-## 🛠️ 技术底座全景
+## 快速开始
 
-| 模块区域 | 主力选型 | 组件 & 库 | 职能定义 |
-| :---: | :---: | :---: | :--- |
-| **前端呈现** | `Vue 3` | `Vite` \ `Pinia` \ `vue-router` \ `Axios` | 抛却被重装系统与繁重编译捆绑的生态，基于 CompositionAPI 高速渲染，利用无死锁的双态阻断 Axios 锁消除 401 轮回攻击。 |
-| **后端枢纽** | `Python` | `FastAPI` \ `SQLAlchemy` \ `PyJWT` | 事件驱动级请求代理中枢。将 JWT 解密拦截做成最干净轻便的 Depends 依赖漏斗。 |
-| **调度与持久**| `引擎` | `MySQL 8.0` \ `Redis 7.0` | 一手建立高并发读写双向缓冲管道。通过 MySQL 保存特征关联与表关系，Redis 完成极速毫秒级动作序列缓存。 |
-| **核心算法** | `AI 矩阵` | `Sklearn` \ `PyTorch` \ `Numpy`  | 基于张量拼接的深排执行厂，脱手任何第三方臃肿推荐商服务，直达硬件深层算力。 |
+### 前提条件
 
----
+- Git
+- Docker Engine + Docker Compose
 
-## ⚡ 极速启动 (Quick Start)
-
-**前期准备**：请确保你的机器安装了 **Git**, 和 **Docker Engine + Docker Compose**。本系统所有微服务环境（包含数据库）全部实现容器隔离化，宿主机无需装载沉重的本地包依赖。
-
-### 1. 抓取与环境置空
-如果你拉取了这套库，不论这是新老宿主机。**首先要拉取，然后确保历史的交叉污染卷、脏容器被物理终结（此步极其重要）：**
+### 1. 克隆与清理
 
 ```bash
 git clone https://gitee.com/BraveBeter/music_rec.git
 cd music_rec
 
-# 清空可能残留的无主污染映射字典
+# 清空可能残留的容器和卷
 docker-compose down -v --remove-orphans
 ```
 
-### 2. 环境变量配置
-在启动服务前，需要基于模板创建环境变量配置文件（必须步骤，Docker 容器会从中读取所需的验证信息）：
+### 2. 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
-*(你也可以根据需要编辑 `.env` 以修改默认密码等)*
 
-### 3. 启动微服务集群
-直接进入部署阶段，将包含前后端、数据库以及任务分发机的 5 组微服务统一启动：
+### 3. 启动服务
 
 ```bash
 docker-compose up -d --build
 ```
-> *注：此命令将向外映射 13307 (MySQL), 16379 (Redis), 13000 (前端) 避突通道，请确保本地端口未被占用。*
 
-### 4. 数据初始化与日志监控
-系统启动后将自动执行初始化脚本拉取基础数据。在此期间，请监控数据容器日志进度：
+服务端口：
+- `13000` — 用户前端
+- `14000` — 管理前端
+- `18000` — 用户后端
+- `19000` — 管理后端
+- `13307` — MySQL
+- `16379` — Redis
+
+Admin 后端启动时自动建表并创建管理员账号，无需 seeder 容器。
+
+### 4. 开始使用
+
+1. 访问 **http://127.0.0.1:14000** 进入管理后台
+2. 使用 `.env` 中配置的管理员账号登录
+3. 导入数据（Jamendo/Deezer/LastFM/合成数据）
+4. 执行预处理 → 特征工程 → 模型训练 → 模型评测
+5. 访问 **http://127.0.0.1:13000** 体验推荐系统
+
+---
+
+## 推荐架构
+
+```
+用户请求 → Redis 缓存 (L1)
+         → ML 实时推演 (L2)
+            ├─ 多路召回: SASRec + ItemCF + Tag-based + Genre-Popularity
+            ├─ DeepFM 精排 (70% 权重) + 召回分数 (30% 权重)
+            └─ MMR 多样性重排 (每曲风上限 3 首)
+         → 离线预计算 (L3)
+         → 热榜冷启动 (L4)
+```
+
+## 管理后台功能
+
+| 功能 | 说明 |
+| :--- | :--- |
+| Dashboard | 系统概览：统计卡片、模型状态、最近训练/评测记录 |
+| 数据导入 | Jamendo 全曲流媒体、Deezer 30s 试听、LastFM 1K 用户、合成数据 |
+| 模型训练 | 实时 SSE 进度可视化（Epoch 进度条、Loss 值、日志流）、训练历史、日志弹窗 |
+| 定时调度 | Cron 表达式 / 固定间隔 / 数据量阈值三种触发模式 |
+| 模型状态 | 模型可用性、评测指标对比表（P@K, R@K, NDCG@K, HR@K, Coverage）、评测历史 |
+
+## 本地开发
 
 ```bash
-docker logs musicrec_seeder -f
+# 后端
+uv run uvicorn app.main:app --reload                    # 用户后端
+uv run uvicorn admin.main:app --reload --port 8001      # 管理后端
+
+# 前端
+cd frontend && npm run dev       # 用户前端 (port 5173)
+cd admin-web && npm run dev      # 管理前端 (port 5174)
+
+# ML 训练与评测
+uv run python -m ml_pipeline.data_process.preprocess
+uv run python -m ml_pipeline.data_process.feature_engineering
+uv run python -m ml_pipeline.training.train_baseline     # ItemCF + SVD
+uv run python -m ml_pipeline.training.train_sasrec       # SASRec
+uv run python -m ml_pipeline.training.train_deepfm       # DeepFM
+uv run python -m ml_pipeline.evaluation.evaluate_trained # 评测全部已训练模型
 ```
-当日志输出 `✅ Generated 60 users, xxx interactions` 时，即代表基础特征数据库与模拟模型录入完毕。
-
-此时，立刻切入浏览器访问前端服务：**`http://127.0.0.1:13000`** 体验推荐系统交互。
 
 ---
 
-
----
-> *本项目基于前沿工业界推荐落地场景搭建开发，适用于学习、毕业论证与小微工业化起步实践。由开发者 Antigravity AI 结对协助保障稳固代码执行体。*
+> *本项目基于工业界推荐落地场景搭建，适用于学习、毕业设计与小微工业化起步实践。*

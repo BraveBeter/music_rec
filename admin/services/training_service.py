@@ -110,7 +110,7 @@ def list_eval_progress() -> list[dict]:
 
 def list_eval_active() -> list[dict]:
     """Return active evaluation tasks."""
-    return [p for p in list_eval_progress() if p.get("status") == "running"]
+    return [p for p in list_eval_progress() if isinstance(p, dict) and p.get("status") == "running"]
 
 
 def list_eval_history(limit: int = 50) -> list[dict]:
@@ -118,9 +118,19 @@ def list_eval_history(limit: int = 50) -> list[dict]:
     all_runs = list_eval_progress()
     history = [
         r for r in all_runs
-        if r.get("status") in ("completed", "error", "interrupted", "cancelled")
+        if isinstance(r, dict) and r.get("status") in ("completed", "error", "interrupted", "cancelled")
     ]
     return history[:limit]
+
+
+def get_eval_report(task_id: str) -> dict:
+    """Read per-task evaluation report JSON."""
+    import json as _json
+    path = os.path.join(EVAL_PROGRESS_DIR, f"{task_id}_report.json")
+    if not os.path.exists(path):
+        return {"error": "not_found", "task_id": task_id}
+    with open(path) as f:
+        return {"task_id": task_id, "results": _json.load(f)}
 
 
 def list_history(limit: int = 50) -> list[dict]:
@@ -128,7 +138,7 @@ def list_history(limit: int = 50) -> list[dict]:
     all_runs = ProgressTracker.list_all_progress()
     history = [
         r for r in all_runs
-        if r.get("status") in ("completed", "error", "interrupted")
+        if r.get("status") in ("completed", "error", "interrupted", "cancelled")
         and r.get("task_type") != "evaluate"
     ]
     return history[:limit]

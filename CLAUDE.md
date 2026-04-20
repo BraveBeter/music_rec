@@ -30,14 +30,16 @@ cd frontend && npm run dev      # User frontend (port 5173)
 cd admin-web && npm run dev     # Admin frontend (port 5174)
 ```
 
-### ML Training
+### ML Training & Evaluation
 ```bash
 uv run python -m ml_pipeline.data_process.preprocess
+uv run python -m ml_pipeline.data_process.feature_engineering
 uv run python -m ml_pipeline.training.train_baseline    # ItemCF + SVD
 uv run python -m ml_pipeline.training.train_sasrec      # SASRec
 uv run python -m ml_pipeline.training.train_deepfm      # DeepFM
+uv run python -m ml_pipeline.evaluation.evaluate_trained  # Evaluate all trained models
 ```
-All training scripts accept optional `--task-id <id>` for progress tracking via `data/training_progress/<id>.json`.
+All training/evaluation scripts accept optional `--task-id <id>` for progress tracking. Training progress goes to `data/training_progress/`, evaluation progress to `data/evaluation_progress/`.
 
 ### Data Scripts
 ```bash
@@ -69,7 +71,7 @@ FastAPI on port 19000. Independent Docker container, imports from `common/`.
 - `api/users.py` — Batch user import
 - `api/interactions.py` — Batch interaction import
 - `api/data.py` — Trigger LastFM/synthetic data generation
-- `api/training.py` — Trigger preprocess + model training + SSE progress streaming + history
+- `api/training.py` — Trigger preprocess + model training + evaluation + SSE progress streaming + history + eval-specific endpoints
 - `api/scheduler.py` — CRUD for scheduled/auto-retraining tasks + threshold config
 - `api/status.py` — System stats (data counts, model availability)
 - `services/training_service.py` — Training subprocess orchestration with progress tracking
@@ -85,7 +87,8 @@ FastAPI on port 19000. Independent Docker container, imports from `common/`.
 Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.py`.
 - `models/` — ItemCF, SASRec, DeepFM, MatrixFactorization
 - `training/` — Training scripts, output to `data/models/`
-- `training/progress.py` — File-based cross-process progress tracker (ProgressTracker)
+- `training/progress.py` — File-based cross-process progress tracker (ProgressTracker), separate dirs for training and evaluation
+- `evaluation/` — Model evaluation (evaluate_trained.py, metrics.py), outputs comparison_report.json
 - `inference/recall.py` — Multi-recall: SASRec + ItemCF + tag-based + genre-aware popularity
 - `inference/ranking.py` — DeepFM ranking (70%) + recall score (30%)
 - `inference/pipeline.py` — Full pipeline with MMR diversity re-ranking
@@ -93,9 +96,13 @@ Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.p
 
 ### Training Progress System
 - Training scripts write progress to `data/training_progress/<task_id>.json` (atomic writes)
+- Evaluation scripts write progress to `data/evaluation_progress/<task_id>.json`
+- Per-task evaluation reports saved as `data/evaluation_progress/<task_id>_report.json`
 - Admin backend reads these files via `ProgressTracker` static methods
 - SSE endpoint (`/admin/training/progress/<task_id>/stream`) pushes real-time updates to frontend
+- Evaluation has separate endpoints: `eval-progress`, `eval-history`, `eval-report/{task_id}`
 - Global asyncio.Lock prevents parallel training execution
+- `list_all_progress` skips `_report.json` files (they contain result arrays, not progress dicts)
 
 ### Scheduler System
 - Uses APScheduler 3.x (AsyncIOScheduler) embedded in admin backend
@@ -111,17 +118,21 @@ Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.p
 4. Popularity cold-start
 
 ### User Frontend (`frontend/`)
-Vue 3 + Vite + Pinia. Views: Home, Discover, Login, Register, Favorites, Profile.
+Vue 3 + Vite + Pinia. Views: Home, Discover, Login, Register, Favorites, Profile, History, ArtistDetail.
+- Home: personalized recommendations (similar tracks from top-played via ItemCF)
+- Discover: genre browsing (random + ranking grid), search
+- ArtistDetail: artist tracks + favorites
+- Player bar: favorite button + artist link
 
 ### Admin Frontend (`admin-web/`)
 Vue 3 + Vite + Pinia. Sidebar layout (220px fixed) + content area (max-width 1200px).
 - `components/AppLayout.vue` — Sidebar + content shell
-- `components/` — Shared: StatCard, ProgressBar, LogPanel, StatusBadge
-- `views/Dashboard.vue` — Overview: stats + model status + recent training
+- `components/` — Shared: StatCard, ProgressBar, LogPanel, StatusBadge, LogDialog (log + eval results viewer)
+- `views/Dashboard.vue` — Overview: stats + model status + recent training + recent evaluations
 - `views/DataImport.vue` — Data source management
-- `views/Training.vue` — Real-time training visualization (SSE) + history
+- `views/Training.vue` — Real-time training visualization (SSE) + history + log dialog
 - `views/Scheduler.vue` — Scheduled task management + threshold config
-- `views/Models.vue` — Model availability and metrics
+- `views/Models.vue` — Model availability, evaluation metrics comparison, evaluation history + log dialog
 - `stores/training.ts` — SSE connection management, active tasks, history
 - `stores/scheduler.ts` — Schedule CRUD, threshold state
 
@@ -135,5 +146,7 @@ Vue 3 + Vite + Pinia. Sidebar layout (220px fixed) + content area (max-width 120
 - Config: `.env` for Docker defaults, `.env.local` for local overrides.
 - Training uses genre-balanced data from `track_genres.json` and `genre_tracks.json`.
 - `data/` directory is gitignored — not tracked in version control.
+- Model artifacts save index mappings (user2idx/track2idx) alongside weights for correct inference alignment.
+- DeepFM evaluation/ranking uses model's own feature metadata (sparse_features, dense_features, sparse_dims) rather than feature_meta.json to avoid shape mismatches after re-running feature engineering.
 - JWT admin token expires in 480 minutes (8 hours).
 - Two git remotes: `origin` (Gitee), `github` (GitHub).

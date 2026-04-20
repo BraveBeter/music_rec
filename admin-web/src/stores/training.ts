@@ -90,15 +90,15 @@ export const useTrainingStore = defineStore('training', () => {
 
         if (['completed', 'error', 'interrupted', 'cancelled'].includes(progress.status)) {
           unsubscribeFromTask(taskId)
-          // Re-fetch active tasks to discover the next pipeline step
-          fetchActiveTasks().then(() => {
-            // Clear pipeline flag when no more tasks are running
-            if (Object.values(activeTasks.value).every(t =>
-              !['running'].includes(t.status)
-            )) {
-              pipelineRunning.value = false
-            }
-          })
+          if (pipelineRunning.value) {
+            // Wait for backend to start next pipeline step before checking
+            setTimeout(async () => {
+              await fetchActiveTasks()
+              if (!Object.values(activeTasks.value).some(t => t.status === 'running')) {
+                pipelineRunning.value = false
+              }
+            }, 8000)
+          }
         }
       } catch { /* ignore parse errors */ }
     }

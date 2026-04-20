@@ -65,6 +65,28 @@ async def start_training(name: str, module: str) -> dict:
     return {"status": "started", "task_id": tid, "pid": process.pid}
 
 
+async def start_and_wait(name: str, module: str) -> dict:
+    """Start a training subprocess and wait for it to complete.
+    Returns the final progress dict.
+    """
+    result = await start_training(name, module)
+    if result.get("status") == "already_running":
+        # Wait for the existing one to finish
+        tid = result["task_id"]
+    elif result.get("status") == "started":
+        tid = result["task_id"]
+    else:
+        return result
+
+    # Poll until the task finishes
+    import asyncio as _asyncio
+    while True:
+        progress = ProgressTracker.read_progress(tid)
+        if progress and progress.get("status") in ("completed", "error", "interrupted", "cancelled"):
+            return progress
+        await _asyncio.sleep(2)
+
+
 def get_progress(task_id: str) -> dict | None:
     return ProgressTracker.read_progress(task_id)
 

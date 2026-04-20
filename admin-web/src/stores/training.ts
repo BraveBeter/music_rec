@@ -84,6 +84,8 @@ export const useTrainingStore = defineStore('training', () => {
 
         if (['completed', 'error', 'interrupted', 'cancelled'].includes(progress.status)) {
           unsubscribeFromTask(taskId)
+          // Re-fetch active tasks to discover the next pipeline step
+          fetchActiveTasks()
         }
       } catch { /* ignore parse errors */ }
     }

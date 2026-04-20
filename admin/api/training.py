@@ -57,10 +57,10 @@ async def train_deepfm(admin: User = Depends(get_admin_user)):
 
 @router.post("/train-all")
 async def train_all(admin: User = Depends(get_admin_user)):
-    """Run full training pipeline: preprocess + all models."""
+    """Run full training pipeline: preprocess + feature engineering + all models."""
     results = []
-    # Sequential: preprocess first, then models
-    for name in ["preprocess", "train_baseline", "train_sasrec", "train_deepfm"]:
+    # Sequential: preprocess → feature engineering → model training
+    for name in ["preprocess", "feature_engineering", "train_baseline", "train_sasrec", "train_deepfm"]:
         result = await training_service.start_training(name, MODULE_MAP[name])
         results.append(result)
     return {"status": "started", "tasks": results}

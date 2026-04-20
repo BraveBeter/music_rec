@@ -117,8 +117,18 @@ def _build_deepfm_fn(feature_meta, user_features, item_features,
     model = DeepFMRecommender()
     model.load()
 
-    sparse_features = feature_meta["sparse_features"]
-    dense_features = feature_meta["dense_features"]
+    # Use model's own feature metadata for alignment with trained weights
+    sparse_features = model.sparse_features
+    dense_features = model.dense_features
+    sparse_dims = model.sparse_dims
+
+    if len(sparse_features) != len(feature_meta.get("sparse_features", [])):
+        logger.warning(
+            f"Feature count mismatch: model trained with {len(sparse_features)} sparse / "
+            f"{len(dense_features)} dense, current data has {len(feature_meta.get('sparse_features', []))} sparse / "
+            f"{len(feature_meta.get('dense_features', []))} dense"
+        )
+
     candidates = item_features.nlargest(candidate_pool_size, "log_popularity")
     item_feat_idx = {row["track_id"]: row for _, row in candidates.iterrows()}
     user_feat_idx = {row["user_id"]: row for _, row in user_features.iterrows()}
@@ -132,15 +142,19 @@ def _build_deepfm_fn(feature_meta, user_features, item_features,
             sparse_vals = []
             for feat in sparse_features:
                 if feat == "user_idx":
-                    sparse_vals.append(int(user2idx.get(user_id, 0)))
+                    val = int(user2idx.get(user_id, 0))
                 elif feat == "track_idx":
-                    sparse_vals.append(int(track2idx.get(track_id, 0)))
+                    val = int(track2idx.get(track_id, 0))
                 elif feat in user_row.index:
-                    sparse_vals.append(int(user_row[feat]))
+                    val = int(user_row[feat])
                 elif feat in item_row.index:
-                    sparse_vals.append(int(item_row[feat]))
+                    val = int(item_row[feat])
                 else:
-                    sparse_vals.append(0)
+                    val = 0
+                # Clip to valid embedding range
+                if feat in sparse_dims:
+                    val = min(val, sparse_dims[feat] - 1)
+                sparse_vals.append(val)
             dense_vals = []
             for feat in dense_features:
                 if feat in user_row.index:

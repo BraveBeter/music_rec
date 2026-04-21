@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timezone
 
 from ml_pipeline.training.progress import ProgressTracker, PROGRESS_DIR, EVAL_PROGRESS_DIR
+from ml_pipeline.models.versioning import ModelRegistry
 
 logger = logging.getLogger("admin")
 
@@ -142,6 +143,23 @@ def list_history(limit: int = 50) -> list[dict]:
         and r.get("task_type") != "evaluate"
     ]
     return history[:limit]
+
+
+# ---- Model versioning ----
+
+def get_model_versions() -> dict:
+    """Get all model version info from registry."""
+    registry = ModelRegistry()
+    return registry.get_all_model_info()
+
+
+def promote_model_version(model_name: str, version_id: str) -> dict:
+    """Manually promote a specific model version to production."""
+    registry = ModelRegistry()
+    success = registry.promote_version(model_name, version_id)
+    if success:
+        return {"status": "promoted", "model": model_name, "version_id": version_id}
+    return {"status": "not_found", "model": model_name, "version_id": version_id}
 
 
 async def cancel_training(task_id: str) -> dict:

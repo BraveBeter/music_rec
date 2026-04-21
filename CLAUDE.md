@@ -86,6 +86,7 @@ FastAPI on port 19000. Independent Docker container, imports from `common/`.
 ### ML Pipeline (`ml_pipeline/`)
 Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.py`.
 - `models/` — ItemCF, SASRec, DeepFM, MatrixFactorization
+- `models/versioning.py` — Model version management (ModelRegistry), auto-promotion via NDCG@10 comparison
 - `training/` — Training scripts, output to `data/models/`
 - `training/progress.py` — File-based cross-process progress tracker (ProgressTracker), separate dirs for training and evaluation
 - `evaluation/` — Model evaluation (evaluate_trained.py, metrics.py), outputs comparison_report.json
@@ -103,6 +104,18 @@ Independent from web servers. Inference entry: `ml_pipeline/inference/pipeline.p
 - Evaluation has separate endpoints: `eval-progress`, `eval-history`, `eval-report/{task_id}`
 - Global asyncio.Lock prevents parallel training execution
 - `list_all_progress` skips `_report.json` files (they contain result arrays, not progress dicts)
+
+### Model Versioning System
+- Each training saves a versioned copy to `data/model_versions/{model}/{version_id}/`
+- `data/model_registry.json` tracks versions, metrics, and active version per model
+- After training, scripts compare NDCG@10 against current active version
+- If better or first version: auto-promote (copy to `data/models/{model}/`), mark active
+- If worse: mark rejected, production directory untouched
+- Keeps last 3 versions, auto-cleanup oldest
+- Inference code unchanged — always loads from `data/models/{model}/`
+- Admin API: `model-versions` (list), `model-versions/{model}/{version_id}/promote` (manual promote)
+- Evaluation supports per-model and per-version: `--model item_cf --version-dir <path>`
+- `--model funnel` evaluates the multi-recall pipeline independently
 
 ### Scheduler System
 - Uses APScheduler 3.x (AsyncIOScheduler) embedded in admin backend
@@ -132,7 +145,7 @@ Vue 3 + Vite + Pinia. Sidebar layout (220px fixed) + content area (max-width 120
 - `views/DataImport.vue` — Data source management
 - `views/Training.vue` — Real-time training visualization (SSE) + history + log dialog
 - `views/Scheduler.vue` — Scheduled task management + threshold config
-- `views/Models.vue` — Model availability, evaluation metrics comparison, evaluation history + log dialog
+- `views/Models.vue` — Model availability, evaluation metrics comparison, version history with promote, per-version evaluation dropdown
 - `stores/training.ts` — SSE connection management, active tasks, history
 - `stores/scheduler.ts` — Schedule CRUD, threshold state
 

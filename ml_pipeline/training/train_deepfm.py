@@ -6,6 +6,7 @@ import os
 import sys
 import json
 import logging
+from datetime import datetime
 
 import pandas as pd
 import numpy as np
@@ -117,6 +118,98 @@ def main():
         "train_loss_final": history["train_loss"][-1] if history.get("train_loss") else None,
         "val_loss_final": history["val_loss"][-1] if history.get("val_loss") else None,
     }
+
+    # Recommendation evaluation for NDCG@10 (needed for version comparison)
+    deepfm_eval_result = None
+    try:
+        logger.info("Running recommendation evaluation for DeepFM...")
+        test_recs = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "test.parquet"))
+        all_interactions = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "all_interactions.parquet"))
+        user2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet")).values)
+        track2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet")).values)
+        user_features = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user_features.parquet"))
+        item_features = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "item_features.parquet"))
+
+        # Use model's own features
+        model_sparse = deepfm.sparse_features
+        model_dense = deepfm.dense_features
+        model_sparse_dims = deepfm.sparse_dims
+
+        candidates = item_features.nlargest(500, "log_popularity")
+        item_feat_idx = {row["track_id"]: row for _, row in candidates.iterrows()}
+        user_feat_idx = {row["user_id"]: row for _, row in user_features.iterrows()}
+
+        def deepfm_recommend(user_id):
+            user_row = user_feat_idx.get(user_id)
+            if user_row is None:
+                return []
+            sparse_rows, dense_rows, valid_candidates = [], [], []
+            for track_id, item_row in item_feat_idx.items():
+                sparse_vals = []
+                for feat in model_sparse:
+                    if feat == "user_idx":
+                        val = int(user2idx.get(user_id, 0))
+                    elif feat == "track_idx":
+                        val = int(track2idx.get(track_id, 0))
+                    elif feat in user_row.index:
+                        val = int(user_row[feat])
+                    elif feat in item_row.index:
+                        val = int(item_row[feat])
+                    else:
+                        val = 0
+                    if feat in model_sparse_dims:
+                        val = min(val, model_sparse_dims[feat] - 1)
+                    sparse_vals.append(val)
+                dense_vals = []
+                for feat in model_dense:
+                    if feat in user_row.index:
+                        dense_vals.append(float(user_row[feat]))
+                    elif feat in item_row.index:
+                        dense_vals.append(float(item_row[feat]))
+                    else:
+                        dense_vals.append(0.0)
+                sparse_rows.append(sparse_vals)
+                dense_rows.append(dense_vals)
+                valid_candidates.append(track_id)
+            if not valid_candidates:
+                return []
+            import numpy as np
+            sparse_array = np.array(sparse_rows, dtype=np.int64)
+            dense_array = np.array(dense_rows, dtype=np.float32)
+            scores = deepfm.predict(sparse_array, dense_array)
+            ranked = sorted(zip(valid_candidates, scores), key=lambda x: x[1], reverse=True)
+            return [(tid, float(s)) for tid, s in ranked[:20]]
+
+        deepfm_eval_result = evaluate_model(
+            model_name="DeepFM",
+            recommend_fn=deepfm_recommend,
+            test_data=test_recs,
+            all_interactions=all_interactions,
+            num_items=len(track2idx),
+        )
+        logger.info(f"DeepFM recommendation metrics: {deepfm_eval_result}")
+        if tracker:
+            tracker.append_log(f"DeepFM rec eval: NDCG@10={deepfm_eval_result.get('ndcg@10', 0):.4f}")
+    except Exception as e:
+        logger.warning(f"DeepFM recommendation evaluation failed: {e}")
+
+    # Version management: save version + compare + promote
+    version_id = task_id or f"train_deepfm_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from ml_pipeline.models.versioning import ModelRegistry
+    registry = ModelRegistry()
+    # Use recommendation metrics for comparison, fall back to classification metrics
+    comparison_metrics = deepfm_eval_result if deepfm_eval_result else results
+    registry.save_version_artifacts("deepfm", version_id)
+    registry.register_version("deepfm", version_id, comparison_metrics)
+    promoted = registry.compare_and_promote("deepfm", version_id, comparison_metrics)
+    if promoted:
+        logger.info("DeepFM: new version promoted to production")
+        if tracker:
+            tracker.append_log("DeepFM: promoted (NDCG@10 improved)")
+    else:
+        logger.info("DeepFM: new version rejected (NDCG@10 did not improve)")
+        if tracker:
+            tracker.append_log("DeepFM: rejected (NDCG@10 did not improve)")
 
     report_path = os.path.join(MODEL_DIR, "deepfm_report.json")
     with open(report_path, "w") as f:

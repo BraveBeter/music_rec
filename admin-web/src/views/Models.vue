@@ -31,9 +31,20 @@
     <section class="panel">
       <div class="panel-header">
         <h2>评测指标对比</h2>
-        <button @click="startEvaluation" :disabled="evaluating" class="btn-eval">
-          {{ evaluating ? '评测中...' : '开始评测' }}
-        </button>
+        <div class="eval-actions">
+          <select v-model="evalTarget" class="eval-select" :disabled="evaluating">
+            <option value="">全部生产模型</option>
+            <option value="funnel">多路召回管线 (Funnel)</option>
+            <optgroup v-for="(versions, model) in versionOptions" :key="model" :label="modelLabels[model] || model">
+              <option v-for="v in versions" :key="v.version_id" :value="v.value">
+                {{ v.label }}
+              </option>
+            </optgroup>
+          </select>
+          <button @click="startEvaluation" :disabled="evaluating" class="btn-eval">
+            {{ evaluating ? '评测中...' : '开始评测' }}
+          </button>
+        </div>
       </div>
 
       <!-- Progress panel when evaluating -->
@@ -77,6 +88,46 @@
       </div>
     </section>
 
+    <!-- Model Versions -->
+    <section class="panel">
+      <h2>模型版本</h2>
+      <div v-if="!hasVersions" class="empty">暂无版本记录</div>
+      <template v-else>
+        <div v-for="(modelInfo, modelName) in versionData" :key="modelName" class="version-group">
+          <h3 class="version-group-title">{{ modelLabels[modelName] || modelName }}</h3>
+          <table class="history-table">
+            <thead>
+              <tr>
+                <th>版本 ID</th>
+                <th>状态</th>
+                <th>保存时间</th>
+                <th>NDCG@10</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(v, vid) in modelInfo.versions" :key="String(vid)" class="clickable-row">
+                <td class="version-id-cell">{{ vid }}</td>
+                <td><StatusBadge :status="versionStatusMap[v.status] || v.status" /></td>
+                <td>{{ formatTime(v.saved_at) }}</td>
+                <td>
+                  <span v-if="v.metrics?.['ndcg@10'] !== undefined" class="metric-val">
+                    {{ v.metrics['ndcg@10'].toFixed(4) }}
+                  </span>
+                  <span v-else class="metric-na">-</span>
+                </td>
+                <td>
+                  <button v-if="v.status !== 'active'" @click="promoteVersion(modelName, String(vid))"
+                          class="btn-promote">晋升</button>
+                  <span v-else class="active-tag">当前生产</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </section>
+
     <!-- Evaluation History -->
     <section class="panel">
       <h2>评测历史</h2>
@@ -116,7 +167,7 @@
 import { reactive, ref, computed, onMounted, onUnmounted } from 'vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import LogDialog from '@/components/LogDialog.vue'
-import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress, getEvalReport } from '@/api/admin'
+import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress, getEvalReport, getModelVersions, promoteModelVersion } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
 
 interface ModelInfo {
@@ -131,6 +182,8 @@ const evalReports = reactive<Record<string, { eval_users: number; metrics: Recor
 const evaluating = ref(false)
 const evalProgress = ref<Record<string, any> | null>(null)
 const evalHistory = ref<any[]>([])
+const evalTarget = ref('')
+const versionData = ref<Record<string, any>>({})
 let eventSource: EventSource | null = null
 
 const modelLabels: Record<string, string> = {
@@ -139,6 +192,13 @@ const modelLabels: Record<string, string> = {
   deepfm: 'DeepFM',
   sasrec: 'SASRec',
   multi_recall_funnel: 'Multi-recall Funnel',
+}
+
+const versionStatusMap: Record<string, string> = {
+  active: 'completed',
+  superseded: 'idle',
+  rejected: 'error',
+  pending: 'running',
 }
 
 const metricColumns = [
@@ -154,6 +214,7 @@ const metricColumns = [
 ]
 
 const hasReports = computed(() => Object.keys(evalReports).length > 0)
+const hasVersions = computed(() => Object.keys(versionData.value).length > 0)
 
 const evalUsers = computed(() => {
   const users = Object.values(evalReports).map(r => r.eval_users)
@@ -169,6 +230,27 @@ const tableRows = computed(() => {
       label: modelLabels[key] || key,
       metrics: evalReports[key].metrics,
     }))
+})
+
+const versionOptions = computed(() => {
+  const options: Record<string, { version_id: string; label: string; value: string }[]> = {}
+  for (const [modelName, modelInfo] of Object.entries(versionData.value)) {
+    const versions: { version_id: string; label: string; value: string }[] = []
+    for (const [vid, v] of Object.entries((modelInfo as any).versions || {})) {
+      const ndcg = (v as any).metrics?.['ndcg@10']
+      const ndcgStr = ndcg !== undefined ? ` NDCG@10: ${ndcg.toFixed(4)}` : ''
+      const statusTag = (v as any).status === 'active' ? ' [生产]' : (v as any).status === 'rejected' ? ' [已拒绝]' : ' [已淘汰]'
+      versions.push({
+        version_id: vid,
+        label: `${vid}${statusTag}${ndcgStr}`,
+        value: `${modelName}:${vid}`,
+      })
+    }
+    if (versions.length > 0) {
+      options[modelName] = versions
+    }
+  }
+  return options
 })
 
 function formatTime(t: string | null) {
@@ -190,6 +272,13 @@ async function fetchEvalHistory() {
   try {
     const { data } = await getEvalHistory()
     evalHistory.value = data.history || []
+  } catch { /* ignore */ }
+}
+
+async function fetchVersions() {
+  try {
+    const { data } = await getModelVersions()
+    versionData.value = data.models || {}
   } catch { /* ignore */ }
 }
 
@@ -215,11 +304,11 @@ async function refresh() {
   } catch { /* ignore */ }
 
   fetchEvalHistory()
+  fetchVersions()
   reconnectEvalSSE()
 }
 
 function reconnectEvalSSE() {
-  // Check if there's a running evaluation and re-subscribe to SSE
   listEvalProgress().then(({ data }) => {
     const running = (data.progress || []).find((t: any) => t.status === 'running')
     if (running) {
@@ -278,8 +367,17 @@ async function startEvaluation() {
   evaluating.value = true
   evalProgress.value = null
 
+  let model: string | undefined
+  let versionId: string | undefined
+
+  if (evalTarget.value) {
+    const parts = evalTarget.value.split(':')
+    model = parts[0]
+    versionId = parts[1]
+  }
+
   try {
-    const { data } = await runEvaluation()
+    const { data } = await runEvaluation(model, versionId)
     const taskId = data.task_id
     if (!taskId || data.status === 'already_running') {
       evaluating.value = false
@@ -290,6 +388,13 @@ async function startEvaluation() {
   } catch {
     evaluating.value = false
   }
+}
+
+async function promoteVersion(modelName: string, versionId: string) {
+  try {
+    await promoteModelVersion(modelName, versionId)
+    fetchVersions()
+  } catch { /* ignore */ }
 }
 
 function formatMeta(meta: Record<string, any>) {
@@ -319,7 +424,6 @@ async function openEvalLog(task: any) {
   logStatus.value = task.status
   logReport.value = []
 
-  // For completed tasks, fetch the per-task report
   if (['completed'].includes(task.status) && task.task_id) {
     try {
       const { data } = await getEvalReport(task.task_id)
@@ -387,6 +491,17 @@ onUnmounted(closeEventSource)
 .desc { color: #a0a0b0; font-size: 0.85rem; margin: 0 0 0.75rem; }
 .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
 .panel-header h2 { margin: 0; }
+.eval-actions { display: flex; gap: 0.5rem; align-items: center; }
+.eval-select {
+  padding: 0.4rem 0.6rem;
+  background: #0f3460;
+  color: #e0e0e0;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  max-width: 320px;
+}
+.eval-select:disabled { opacity: 0.6; }
 .btn-eval {
   padding: 0.4rem 0.8rem;
   background: #e94560;
@@ -424,21 +539,6 @@ onUnmounted(closeEventSource)
   font-size: 0.85rem;
   padding: 0.4rem 0;
 }
-.log-panel {
-  background: #0a0a1a;
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
-  max-height: 240px;
-  overflow-y: auto;
-  font-family: monospace;
-  font-size: 0.78rem;
-}
-.log-line {
-  color: #8a8aaa;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
 
 /* Evaluation table */
 .table-wrapper { overflow-x: auto; }
@@ -462,6 +562,36 @@ onUnmounted(closeEventSource)
 .model-cell { font-weight: 600; color: #e0e0e0; }
 .metric-val { color: #60a5fa; font-variant-numeric: tabular-nums; }
 .metric-na { color: #4a4a6a; }
+
+/* Version table */
+.version-group { margin-bottom: 1rem; }
+.version-group:last-child { margin-bottom: 0; }
+.version-group-title {
+  font-size: 0.9rem;
+  color: #a0a0b0;
+  margin: 0 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid #1a1a3e;
+}
+.version-id-cell {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #8a8aaa;
+}
+.btn-promote {
+  padding: 0.2rem 0.5rem;
+  background: none;
+  border: 1px solid #4ade80;
+  color: #4ade80;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.btn-promote:hover { background: #4ade8022; }
+.active-tag {
+  color: #4ade80;
+  font-size: 0.8rem;
+}
 
 /* History table */
 .empty { color: #4a4a6a; font-size: 0.9rem; padding: 0.5rem 0; }

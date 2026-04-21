@@ -93,9 +93,54 @@ async def train_all(admin: User = Depends(get_admin_user)):
 
 
 @router.post("/evaluate")
-async def run_evaluation(admin: User = Depends(get_admin_user)):
-    """Evaluate all trained models on test data."""
-    return await training_service.start_training("evaluate", MODULE_MAP["evaluate"])
+async def run_evaluation(
+    model: str = Query(None, description="Model to evaluate: item_cf, deepfm, sasrec, or None for all"),
+    version_id: str = Query(None, description="Specific version ID to evaluate"),
+    admin: User = Depends(get_admin_user),
+):
+    """Evaluate trained models on test data. Optionally filter by model and version."""
+    from ml_pipeline.models.versioning import ModelRegistry
+
+    cmd_extra = []
+    if model:
+        cmd_extra.extend(["--model", model])
+    if version_id and model:
+        registry = ModelRegistry()
+        version_dir = registry.get_version_dir(model, version_id)
+        if version_dir:
+            cmd_extra.extend(["--version-dir", version_dir])
+
+    if not cmd_extra:
+        return await training_service.start_training("evaluate", MODULE_MAP["evaluate"])
+
+    # Build custom command with extra args
+    from datetime import datetime as _dt
+    from ml_pipeline.training.progress import ProgressTracker
+
+    active = ProgressTracker.list_active()
+    for a in active:
+        if a.get("task_type") == "evaluate" and a.get("status") == "running":
+            return {"status": "already_running", "task_id": a["task_id"], "name": "evaluate"}
+
+    tid = f"evaluate_{_dt.now().strftime('%Y%m%d_%H%M%S')}"
+    cmd = ["python", "-m", MODULE_MAP["evaluate"], "--task-id", tid] + cmd_extra
+
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    async def _log_output():
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            logger.info(f"[evaluate:{tid}] {line.decode().rstrip()}")
+        await process.wait()
+
+    asyncio.create_task(_log_output())
+    return {"status": "started", "task_id": tid, "pid": process.pid}
 
 
 @router.get("/progress")
@@ -169,3 +214,18 @@ async def eval_history(limit: int = Query(50, ge=1, le=200), admin: User = Depen
 async def get_eval_report(task_id: str, admin: User = Depends(get_admin_user)):
     """Get evaluation results for a specific task."""
     return training_service.get_eval_report(task_id)
+
+
+# ---- Model versioning endpoints ----
+
+@router.get("/model-versions")
+async def get_model_versions(admin: User = Depends(get_admin_user)):
+    """Get all model version info from registry."""
+    return training_service.get_model_versions()
+
+
+@router.post("/model-versions/{model_name}/{version_id}/promote")
+async def promote_model_version(model_name: str, version_id: str,
+                                admin: User = Depends(get_admin_user)):
+    """Manually promote a specific model version to production."""
+    return training_service.promote_model_version(model_name, version_id)

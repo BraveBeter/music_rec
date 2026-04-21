@@ -22,7 +22,8 @@ export const trainBaseline = () => adminClient.post('/admin/training/train-basel
 export const trainSasrec = () => adminClient.post('/admin/training/train-sasrec')
 export const trainDeepfm = () => adminClient.post('/admin/training/train-deepfm')
 export const trainAll = () => adminClient.post('/admin/training/train-all')
-export const runEvaluation = () => adminClient.post('/admin/training/evaluate')
+export const runEvaluation = (model?: string, versionId?: string) =>
+  adminClient.post('/admin/training/evaluate', null, { params: { model, version_id: versionId } })
 
 // Training — progress & history
 export const listTrainingProgress = () => adminClient.get('/admin/training/progress')
@@ -49,3 +50,8 @@ export const getThreshold = () => adminClient.get('/admin/scheduler/threshold')
 export const updateThreshold = (lastTrainingCount: number) =>
   adminClient.put('/admin/scheduler/threshold', { last_training_count: lastTrainingCount })
 export const checkThresholdNow = () => adminClient.post('/admin/scheduler/check-threshold')
+
+// Model versioning
+export const getModelVersions = () => adminClient.get('/admin/training/model-versions')
+export const promoteModelVersion = (model: string, versionId: string) =>
+  adminClient.post(`/admin/training/model-versions/${model}/${versionId}/promote`)

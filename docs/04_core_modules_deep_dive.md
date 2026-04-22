@@ -170,6 +170,75 @@ export default defineConfig({
 
 **导航守卫逻辑**：`beforeEach` 检查 `localStorage.getItem('access_token')`，有 token 则已登录态。`requiresAuth` 路由无 token → 重定向 `/login?redirect=原始路径`；`guest` 路由有 token → 重定向 `/`。
 
+### 4.2.4 管理后端 API 路由表 (`admin/`)
+
+#### 认证与状态
+
+| 方法 | 路径 | 认证 | 功能 |
+|------|------|------|------|
+| POST | `/admin/auth/login` | 无 | 管理员登录（role='admin'校验） |
+| GET | `/admin/status` | 必须 | 系统状态统计（用户/歌曲/交互数/模型状态） |
+
+#### 数据管理
+
+| 方法 | 路径 | 认证 | 功能 |
+|------|------|------|------|
+| POST | `/admin/data/jamendo` | 必须 | 导入 Jamendo 数据 |
+| POST | `/admin/data/deezer` | 必须 | 导入 Deezer 数据 |
+| POST | `/admin/data/lastfm` | 必须 | 生成 LastFM 1K 用户数据 |
+| POST | `/admin/data/synthetic` | 必须 | 生成合成 60 用户数据 |
+| POST | `/admin/users/batch` | 必须 | 批量导入用户 |
+| POST | `/admin/tracks/batch` | 必须 | 批量导入歌曲 |
+| POST | `/admin/interactions/batch` | 必须 | 批量导入交互 |
+
+#### 训练与评测
+
+| 方法 | 路径 | 认证 | 功能 |
+|------|------|------|------|
+| POST | `/admin/training/preprocess` | 必须 | 启动数据预处理 |
+| POST | `/admin/training/feature-engineering` | 必须 | 启动特征工程 |
+| POST | `/admin/training/train-baseline` | 必须 | 训练 ItemCF + SVD |
+| POST | `/admin/training/train-sasrec` | 必须 | 训练 SASRec |
+| POST | `/admin/training/train-deepfm` | 必须 | 训练 DeepFM |
+| POST | `/admin/training/train-all` | 必须 | 顺序执行完整训练流程 |
+| POST | `/admin/training/evaluate` | 必须 | 启动模型评测 |
+| GET | `/admin/training/progress/{task_id}/stream` | 必须 | SSE 实时进度流 |
+| GET | `/admin/training/history` | 必须 | 获取训练历史列表 |
+| GET | `/admin/training/progress` | 必须 | 获取所有进度（跳过 _report.json） |
+| GET | `/admin/training/eval-progress` | 必须 | 获取评测进度列表 |
+| GET | `/admin/training/eval-history` | 必须 | 获取评测历史列表 |
+| GET | `/admin/training/eval-report/{task_id}` | 必须 | 获取特定评测报告 |
+
+#### 模型版本管理
+
+| 方法 | 路径 | 认证 | 功能 |
+|------|------|------|------|
+| GET | `/admin/training/model-versions` | 必须 | 获取所有模型版本信息 |
+| GET | `/admin/training/model-versions/{model}` | 必须 | 获取特定模型的版本列表 |
+| POST | `/admin/training/model-versions/{model}/{version_id}/promote` | 必须 | 手动提升指定版本 |
+
+#### 调度器管理
+
+| 方法 | 路径 | 认证 | 功能 |
+|------|------|------|------|
+| GET | `/admin/scheduler/jobs` | 必须 | 获取所有定时任务 |
+| POST | `/admin/scheduler/schedule` | 必须 | 创建定时任务 |
+| PUT | `/admin/scheduler/schedule/{schedule_id}` | 必须 | 更新定时任务 |
+| DELETE | `/admin/scheduler/schedule/{schedule_id}` | 必须 | 删除定时任务 |
+| PUT | `/admin/scheduler/threshold` | 必须 | 更新数据阈值配置 |
+| GET | `/admin/scheduler/threshold-state` | 必须 | 获取阈值状态 |
+
+### 4.2.5 管理前端路由 (`admin-web/src/router/`)
+
+| 路径 | 组件 | 说明 |
+|------|------|------|
+| `/` | `Dashboard.vue` | 仪表盘：统计 + 最近训练 |
+| `/data` | `DataImport.vue` | 数据导入管理 |
+| `/training` | `Training.vue` | 训练控制 + SSE 实时日志 |
+| `/scheduler` | `Scheduler.vue` | 定时任务管理 |
+| `/models` | `Models.vue` | 模型状态 + 评测对比 + 版本历史 |
+| `/login` | `Login.vue` | 管理员登录 |
+
 ---
 
 ## 4.3 核心算法/业务组件

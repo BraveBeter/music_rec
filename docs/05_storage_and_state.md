@@ -4,7 +4,7 @@
 
 ### 5.1.1 MySQL 表结构全景
 
-系统共 7 张核心表，全部使用 InnoDB 引擎、utf8mb4 字符集：
+系统共 9 张核心表，全部使用 InnoDB 引擎、utf8mb4 字符集：
 
 ```
 ┌──────────────┐       ┌──────────────┐       ┌────────────────────┐
@@ -152,6 +152,49 @@
 | `recommended_track_ids` | JSON | NOT NULL | 预计算的推荐歌曲 ID 列表，如 `["DZ123","DZ456",...]` |
 | `updated_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP ON UPDATE | 推荐生成时间 |
 
+#### `artists` — 歌手表
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `artist_id` | INT | PK, AUTO_INCREMENT | 歌手唯一标识 |
+| `name` | VARCHAR(255) | NOT NULL | 歌手/艺术家名 |
+| `deezer_id` | INT | NULL | Deezer 歌手 ID |
+| `image_url` | VARCHAR(512) | NULL | 歌手图片 URL |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+
+#### `artist_favorites` — 歌手收藏表
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `user_id` | INT | PK, FK→users | 用户标识 |
+| `artist_id` | INT | PK, FK→artists | 歌手标识 |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 收藏时间 |
+
+#### `training_schedules` — 训练调度表
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `schedule_id` | INT | PK, AUTO_INCREMENT | 调度 ID |
+| `name` | VARCHAR(100) | NOT NULL | 任务名称 |
+| `task_type` | VARCHAR(50) | NOT NULL | 任务类型（train_all/evaluate） |
+| `trigger_type` | VARCHAR(20) | NOT NULL | 触发类型（cron/interval/threshold） |
+| `trigger_args` | JSON | NOT NULL | 触发参数 |
+| `enabled` | BOOLEAN | NOT NULL, DEFAULT TRUE | 是否启用 |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+
+**trigger_args 示例**：
+- Cron: `{"cron": "0 2 * * *"}`
+- Interval: `{"minutes": 60}`
+- Threshold: `{"interaction_delta": 100}`
+
+#### `training_threshold_state` — 训练阈值状态表
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `id` | INT | PK, AUTO_INCREMENT | 主键 |
+| `last_interaction_count` | INT | NOT NULL, DEFAULT 0 | 上次训练时交互数 |
+| `last_check_time` | TIMESTAMP | NULL | 上次检查时间 |
+
 ---
 
 ### 5.1.3 ML Pipeline 数据存储（Parquet 文件）
@@ -178,15 +221,63 @@
 
 ### 5.1.4 训练好的模型文件
 
+#### 生产模型目录 (`data/models/`)
+
+推理代码**始终**从此目录加载模型：
+
 | 目录 | 文件 | 说明 |
 |------|------|------|
 | `data/models/item_cf/` | `item_sim_matrix.npy` | item-item 余弦相似度矩阵 (num_items × num_items) |
 | | `user_item_matrix.npz` | 稀疏 user-item 交互矩阵 (scipy sparse 格式) |
-| | `meta.json` | `{"num_users": N, "num_items": M, "top_k_similar": 50}` |
+| | `user2idx.parquet` | 用户 ID 映射 |
+| | `track2idx.parquet` | 歌曲 ID 映射 |
+| | `meta.json` | 模型元数据 |
 | `data/models/svd/` | `svd_model.pt` | PyTorch state_dict（user/item Embedding + bias） |
 | | `item_embeddings.npy` | 全量 item embedding 向量 |
 | | `user_embeddings.npy` | 全量 user embedding 向量 |
-| | `meta.json` | `{"num_users": N, "num_items": M, "embedding_dim": 64}` |
+| | `meta.json` | 模型元数据 |
+| `data/models/deepfm/` | `deepfm_model.pt` | PyTorch state_dict（全部权重） |
+| | `deepfm_model.onnx` | ONNX 导出版本（可选） |
+| | `meta.json` | `{"sparse_features": [...], "dense_features": [...], "sparse_dims": {...}}` |
+| `data/models/sasrec/` | `sasrec_model.pt` | PyTorch state_dict（Transformer 权重） |
+| | `meta.json` | `{"num_items": M, "hidden_dim": 64, "num_heads": 2, ...}` |
+
+#### 版本化模型目录 (`data/model_versions/`)
+
+每次训练保存版本化副本：
+
+```
+data/model_versions/
+├── item_cf/
+│   ├── 20250421_123456/              # 版本 ID（时间戳）
+│   │   ├── item_sim_matrix.npy
+│   │   ├── user_item_matrix.npz
+│   │   ├── user2idx.parquet
+│   │   ├── track2idx.parquet
+│   │   └── meta.json
+│   ├── 20250420_100000/
+│   └── ...
+├── svd/
+├── deepfm/
+└── sasrec/
+```
+
+#### 模型注册表
+
+`data/model_registry.json` — 模型版本注册表，记录所有版本的元数据、指标和状态。
+
+详见：[8. 模型版本管理系统](./08_model_versioning.md)
+
+#### 进度文件目录
+
+```
+data/training_progress/                # 训练进度文件
+├── {task_id}.json                     # 任务进度（原子写）
+
+data/evaluation_progress/              # 评测进度文件
+├── {task_id}.json                     # 评测进度
+└── {task_id}_report.json              # 评测结果报告
+```
 | `data/models/deepfm/` | `deepfm_model.pt` | PyTorch state_dict（全部权重） |
 | | `deepfm_model.onnx` | ONNX 导出版本（可选，用于高性能推理） |
 | | `meta.json` | `{"sparse_features": [...], "dense_features": [...], "sparse_dims": {...}}` |

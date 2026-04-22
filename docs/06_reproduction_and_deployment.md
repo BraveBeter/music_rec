@@ -4,6 +4,17 @@
 
 以下是从 `git clone` 到系统完整运行的全部操作步骤：
 
+### 服务端口
+
+| 服务 | 容器内端口 | 宿主机映射端口 |
+|------|-----------|--------------|
+| MySQL | 3306 | 13307 |
+| Redis | 6379 | 16379 |
+| 用户 Backend | 8000 | 18000 |
+| 管理 Backend | 8001 | 19000 |
+| 用户 Frontend | 3000 | 13000 |
+| 管理 Frontend | 3000 | 14000 |
+
 ### 前置条件
 
 确保宿主机已安装：
@@ -40,15 +51,16 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-此命令按依赖顺序启动 5 个容器：
+此命令按依赖顺序启动 7 个容器：
 
 ```
 启动顺序：
   musicrec_mysql   ──── healthcheck 通过 ────┐
   musicrec_redis   ──── healthcheck 通过 ────┤
                                                ├──► musicrec_backend 启动
-                                               ├──► musicrec_seeder 执行后退出
+                                               ├──► musicrec_admin 启动
                                                └──► musicrec_frontend 启动
+                                               └──► musicrec_admin_web 启动
 ```
 
 首次启动约需 3-5 分钟（构建镜像 + 种子数据 + Deezer API 网络请求）。
@@ -63,12 +75,18 @@ docker compose ps
 # musicrec_mysql     running (healthy)    0.0.0.0:13307->3306/tcp
 # musicrec_redis     running (healthy)    0.0.0.0:16379->6379/tcp
 # musicrec_backend   running              0.0.0.0:18000->8000/tcp
+# musicrec_admin     running              0.0.0.0:19000->8001/tcp
 # musicrec_frontend  running              0.0.0.0:13000->3000/tcp
+# musicrec_admin_web running              0.0.0.0:14000->3000/tcp
 # musicrec_seeder    exited (0)
 
-# 检查后端健康
+# 检查用户后端健康
 curl http://localhost:18000/health
 # 期望: {"status":"healthy","service":"MusicRec"}
+
+# 检查管理后端健康
+curl http://localhost:19000/health
+# 期望: {"status":"healthy","service":"MusicRec Admin"}
 
 # 检查数据库是否已初始化
 docker exec musicrec_mysql mysql -umusic_app -pmusic_app_pass_2026 music_rec -e "SELECT COUNT(*) FROM tracks;"
@@ -79,19 +97,31 @@ docker exec musicrec_mysql mysql -umusic_app -pmusic_app_pass_2026 music_rec -e 
 
 | 服务 | URL |
 |------|-----|
-| **前端界面** | http://localhost:13000 |
-| **后端 API 文档** | http://localhost:18000/docs |
-| **后端 ReDoc 文档** | http://localhost:18000/redoc |
+| **用户前端** | http://localhost:13000 |
+| **管理前端** | http://localhost:14000 |
+| **用户后端 API 文档** | http://localhost:18000/docs |
+| **管理后端 API 文档** | http://localhost:19000/docs |
 
-**默认管理员账号**：`admin` / `admin123`
+**默认管理员账号**：`admin` / `admin123`（在管理前端登录）
 
 ### 步骤 6：（可选）训练 ML 模型
 
-系统在无模型状态下可正常运行（降级到热门推荐）。如需启用个性化推荐，需训练模型：
+系统在无模型状态下可正常运行（降级到热门推荐）。有两种训练方式：
+
+#### 方式 1：通过管理界面（推荐）
+
+1. 访问 **http://localhost:14000** 进入管理后台
+2. 使用管理员账号登录
+3. 进入「训练」页面
+4. 按顺序执行：预处理 → 特征工程 → 训练模型
+5. 查看实时训练进度和日志
+6. 训练完成后进入「模型」页面查看评测结果
+
+#### 方式 2：通过命令行
 
 ```bash
-# 进入后端容器
-docker exec -it musicrec_backend bash
+# 进入管理后端容器
+docker exec -it musicrec_admin bash
 
 # Step 1: 数据预处理（从 MySQL 读取 → 清洗 → 切分 → 存为 Parquet）
 python -m ml_pipeline.data_process.preprocess
@@ -107,6 +137,9 @@ python -m ml_pipeline.training.train_deepfm
 
 # Step 5: 训练 SASRec 序列模型
 python -m ml_pipeline.training.train_sasrec
+
+# Step 6: 评测所有模型
+python -m ml_pipeline.evaluation.evaluate_trained
 
 # 退出容器
 exit
@@ -143,8 +176,11 @@ EOF
 uv run python scripts/seed_data.py
 uv run python ml_pipeline/data_process/generate_synthetic_data.py
 
-# 5. 启动后端
+# 5. 启动用户后端
 uv run uvicorn app.main:app --host 0.0.0.0 --port 18000 --reload
+
+# 6. 启动管理后端（另一个终端）
+uv run uvicorn admin.main:app --host 0.0.0.0 --port 19000 --reload
 ```
 
 ### 前端本地运行
@@ -152,13 +188,15 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 18000 --reload
 ```bash
 # 前置：Node.js >= 20
 
+# 用户前端
 cd frontend
-
-# 1. 安装依赖
 npm install
+npm run dev  # 端口 13000，代理 /api → localhost:18000
 
-# 2. 启动开发服务器（自动代理 /api → localhost:18000）
-npm run dev
+# 管理前端（另一个终端）
+cd admin-web
+npm install
+npm run dev  # 端口 14000，代理 /admin → localhost:19000
 ```
 
 ### 训练模型（本地）

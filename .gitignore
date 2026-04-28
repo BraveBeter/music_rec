@@ -61,4 +61,4 @@ thesis/
 record/
 
 # Local tests are not tracked in this repository
-/tests/
+tests/

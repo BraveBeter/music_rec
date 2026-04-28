@@ -47,6 +47,45 @@ class DeepFMDataset(Dataset):
         return self.sparse[idx], self.dense[idx], self.labels[idx]
 
 
+class PairwiseDeepFMDataset(Dataset):
+    """User-wise pairwise dataset for BPR-style DeepFM training."""
+
+    def __init__(self, data: pd.DataFrame, sparse_features: list, dense_features: list):
+        data = data.reset_index(drop=True)
+        self.sparse = torch.tensor(
+            data[sparse_features].values.astype(np.int64), dtype=torch.long
+        )
+        self.dense = torch.tensor(
+            data[dense_features].values.astype(np.float32), dtype=torch.float32
+        )
+
+        positive = data[data["label"] == 1]
+        negative = data[data["label"] == 0]
+        pos_indices = positive.groupby("user_id").indices
+        neg_indices = negative.groupby("user_id").indices
+
+        self.samples: list[tuple[int, np.ndarray]] = []
+        for user_id, pos_idx in pos_indices.items():
+            neg_idx = neg_indices.get(user_id)
+            if neg_idx is None or len(neg_idx) == 0:
+                continue
+            for idx in pos_idx:
+                self.samples.append((int(idx), np.asarray(neg_idx, dtype=np.int64)))
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        pos_idx, neg_candidates = self.samples[idx]
+        neg_idx = int(np.random.choice(neg_candidates))
+        return (
+            self.sparse[pos_idx],
+            self.dense[pos_idx],
+            self.sparse[neg_idx],
+            self.dense[neg_idx],
+        )
+
+
 class DeepFM(nn.Module):
     """
     DeepFM Model.
@@ -118,13 +157,13 @@ class DeepFM(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def forward(self, sparse_inputs: torch.Tensor, dense_inputs: torch.Tensor) -> torch.Tensor:
+    def forward_logits(self, sparse_inputs: torch.Tensor, dense_inputs: torch.Tensor) -> torch.Tensor:
         """
         Args:
             sparse_inputs: (batch, num_sparse_features) - integer indices
             dense_inputs: (batch, num_dense_features) - float values
         Returns:
-            (batch,) - prediction scores after sigmoid
+            (batch,) - raw logits
         """
         batch_size = sparse_inputs.shape[0]
 
@@ -159,7 +198,11 @@ class DeepFM(nn.Module):
 
         # ---- Combine ----
         logit = first_order + fm_output + dnn_output + self.bias
-        return torch.sigmoid(logit.squeeze(1))
+        return logit.squeeze(1)
+
+    def forward(self, sparse_inputs: torch.Tensor, dense_inputs: torch.Tensor) -> torch.Tensor:
+        """Return sigmoid probabilities for point-wise inference."""
+        return torch.sigmoid(self.forward_logits(sparse_inputs, dense_inputs))
 
 
 class DeepFMRecommender:
@@ -182,6 +225,7 @@ class DeepFMRecommender:
         lr: float = LEARNING_RATE,
         patience: int = 5,
         epoch_callback: Callable[[int, float, float | None], bool | None] | None = None,
+        objective: str = "bce",
     ) -> dict:
         """Train the DeepFM model."""
         self.sparse_features = feature_meta["sparse_features"]
@@ -204,7 +248,10 @@ class DeepFMRecommender:
         optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-5)
         criterion = nn.BCELoss()
 
-        train_dataset = DeepFMDataset(train_data, self.sparse_features, self.dense_features)
+        if objective == "bpr":
+            train_dataset = PairwiseDeepFMDataset(train_data, self.sparse_features, self.dense_features)
+        else:
+            train_dataset = DeepFMDataset(train_data, self.sparse_features, self.dense_features)
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
         val_loader = None
@@ -212,7 +259,10 @@ class DeepFMRecommender:
             for feat in self.sparse_features:
                 if feat in val_data.columns:
                     val_data[feat] = val_data[feat].fillna(0).astype(int).clip(lower=0)
-            val_dataset = DeepFMDataset(val_data, self.sparse_features, self.dense_features)
+            if objective == "bpr":
+                val_dataset = PairwiseDeepFMDataset(val_data, self.sparse_features, self.dense_features)
+            else:
+                val_dataset = DeepFMDataset(val_data, self.sparse_features, self.dense_features)
             val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
         best_val_loss = float("inf")
@@ -225,17 +275,27 @@ class DeepFMRecommender:
             # Train
             self.model.train()
             total_loss = 0.0
-            for sparse, dense, labels in train_loader:
-                sparse, dense, labels = sparse.to(self.device), dense.to(self.device), labels.to(self.device)
+            total_samples = 0
+            for batch in train_loader:
                 optimizer.zero_grad()
-                preds = self.model(sparse, dense)
-                loss = criterion(preds, labels)
+                if objective == "bpr":
+                    pos_sparse, pos_dense, neg_sparse, neg_dense = [x.to(self.device) for x in batch]
+                    pos_logits = self.model.forward_logits(pos_sparse, pos_dense)
+                    neg_logits = self.model.forward_logits(neg_sparse, neg_dense)
+                    loss = -torch.log(torch.sigmoid(pos_logits - neg_logits) + 1e-8).mean()
+                    batch_size_actual = pos_sparse.size(0)
+                else:
+                    sparse, dense, labels = [x.to(self.device) for x in batch]
+                    preds = self.model(sparse, dense)
+                    loss = criterion(preds, labels)
+                    batch_size_actual = labels.size(0)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
                 optimizer.step()
-                total_loss += loss.item() * len(labels)
+                total_loss += loss.item() * batch_size_actual
+                total_samples += batch_size_actual
 
-            avg_train = total_loss / len(train_dataset)
+            avg_train = total_loss / max(total_samples, 1)
             history["train_loss"].append(avg_train)
 
             # Validate
@@ -244,12 +304,23 @@ class DeepFMRecommender:
             if val_loader:
                 self.model.eval()
                 val_total = 0.0
+                val_samples = 0
                 with torch.no_grad():
-                    for sparse, dense, labels in val_loader:
-                        sparse, dense, labels = sparse.to(self.device), dense.to(self.device), labels.to(self.device)
-                        preds = self.model(sparse, dense)
-                        val_total += criterion(preds, labels).item() * len(labels)
-                avg_val = val_total / len(val_dataset)
+                    for batch in val_loader:
+                        if objective == "bpr":
+                            pos_sparse, pos_dense, neg_sparse, neg_dense = [x.to(self.device) for x in batch]
+                            pos_logits = self.model.forward_logits(pos_sparse, pos_dense)
+                            neg_logits = self.model.forward_logits(neg_sparse, neg_dense)
+                            val_loss = -torch.log(torch.sigmoid(pos_logits - neg_logits) + 1e-8).mean()
+                            batch_size_actual = pos_sparse.size(0)
+                        else:
+                            sparse, dense, labels = [x.to(self.device) for x in batch]
+                            preds = self.model(sparse, dense)
+                            val_loss = criterion(preds, labels)
+                            batch_size_actual = labels.size(0)
+                        val_total += val_loss.item() * batch_size_actual
+                        val_samples += batch_size_actual
+                avg_val = val_total / max(val_samples, 1)
                 history["val_loss"].append(avg_val)
                 val_loss_str = f"{avg_val:.4f}"
 

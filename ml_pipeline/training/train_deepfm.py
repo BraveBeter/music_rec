@@ -15,6 +15,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from ml_pipeline.config import PROCESSED_DATA_DIR, MODEL_DIR
 from ml_pipeline.models.deepfm import DeepFMRecommender
 from ml_pipeline.evaluation.metrics import evaluate_model, format_report
+from ml_pipeline.inference.ranking import (
+    build_dense_feature_value,
+    build_deepfm_candidate_pool,
+    build_deepfm_prior_bonus,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -147,6 +152,7 @@ def main():
         "test_logloss": float(logloss),
         "train_loss_final": history["train_loss"][-1] if history.get("train_loss") else None,
         "val_loss_final": history["val_loss"][-1] if history.get("val_loss") else None,
+        "recommendation_metrics": None,
     }
 
     # Recommendation evaluation for NDCG@10 (needed for version comparison)
@@ -165,16 +171,16 @@ def main():
         model_dense = deepfm.dense_features
         model_sparse_dims = deepfm.sparse_dims
 
-        candidates = item_features.nlargest(500, "log_popularity")
-        item_feat_idx = {row["track_id"]: row for _, row in candidates.iterrows()}
         user_feat_idx = {row["user_id"]: row for _, row in user_features.iterrows()}
 
         def deepfm_recommend(user_id):
             user_row = user_feat_idx.get(user_id)
             if user_row is None:
                 return []
-            sparse_rows, dense_rows, valid_candidates = [], [], []
-            for track_id, item_row in item_feat_idx.items():
+            candidates = build_deepfm_candidate_pool(item_features, user_row, candidate_pool_size=2000)
+            sparse_rows, dense_rows, valid_candidates, prior_bonus = [], [], [], []
+            for _, item_row in candidates.iterrows():
+                track_id = item_row["track_id"]
                 sparse_vals = []
                 for feat in model_sparse:
                     if feat == "user_idx":
@@ -192,21 +198,17 @@ def main():
                     sparse_vals.append(val)
                 dense_vals = []
                 for feat in model_dense:
-                    if feat in user_row.index:
-                        dense_vals.append(float(user_row[feat]))
-                    elif feat in item_row.index:
-                        dense_vals.append(float(item_row[feat]))
-                    else:
-                        dense_vals.append(0.0)
+                    dense_vals.append(build_dense_feature_value(feat, user_row, item_row))
                 sparse_rows.append(sparse_vals)
                 dense_rows.append(dense_vals)
                 valid_candidates.append(track_id)
+                prior_bonus.append(build_deepfm_prior_bonus(user_row, item_row))
             if not valid_candidates:
                 return []
             import numpy as np
             sparse_array = np.array(sparse_rows, dtype=np.int64)
             dense_array = np.array(dense_rows, dtype=np.float32)
-            scores = deepfm.predict(sparse_array, dense_array)
+            scores = deepfm.predict(sparse_array, dense_array) + np.array(prior_bonus, dtype=np.float32)
             ranked = sorted(zip(valid_candidates, scores), key=lambda x: x[1], reverse=True)
             return [(tid, float(s)) for tid, s in ranked[:20]]
 
@@ -217,6 +219,7 @@ def main():
             all_interactions=all_interactions,
             num_items=len(track2idx),
         )
+        results["recommendation_metrics"] = deepfm_eval_result
         logger.info(f"DeepFM recommendation metrics: {deepfm_eval_result}")
         if tracker:
             tracker.append_log(f"DeepFM rec eval: NDCG@10={deepfm_eval_result.get('ndcg@10', 0):.4f}")

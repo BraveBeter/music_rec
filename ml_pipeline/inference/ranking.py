@@ -27,6 +27,10 @@ _onnx_session = None
 
 RANKER_RECALL_WEIGHT = 0.85
 RANKER_DEEPFM_WEIGHT = 0.15
+TOP_ARTIST_BONUS = 0.20
+LAST_ARTIST_BONUS = 0.10
+TOP_GENRE_BONUS = 0.05
+LAST_GENRE_BONUS = 0.05
 
 
 def _load_deepfm():
@@ -116,6 +120,65 @@ def _minmax_normalize(values: np.ndarray) -> np.ndarray:
     return ((values - min_val) / (max_val - min_val)).astype(np.float32)
 
 
+def build_dense_feature_value(feat: str, user_row: pd.Series, item_row: pd.Series) -> float:
+    """Build dense feature values, including user-item cross features."""
+    if feat in user_row.index:
+        return float(user_row[feat])
+    if feat in item_row.index:
+        return float(item_row[feat])
+    if feat == "top_artist_match":
+        return float(int(user_row.get("top_artist_idx", -1)) == int(item_row.get("artist_idx", -2)))
+    if feat == "top_genre_match":
+        return float(int(user_row.get("top_genre_idx", -1)) == int(item_row.get("primary_genre_idx", -2)))
+    if feat == "last_artist_match":
+        return float(int(user_row.get("last_artist_idx", -1)) == int(item_row.get("artist_idx", -2)))
+    if feat == "last_genre_match":
+        return float(int(user_row.get("last_genre_idx", -1)) == int(item_row.get("primary_genre_idx", -2)))
+    return 0.0
+
+
+def build_deepfm_candidate_pool(
+    item_features: pd.DataFrame,
+    user_row: pd.Series,
+    candidate_pool_size: int = 2000,
+) -> pd.DataFrame:
+    """Build a metadata-driven candidate pool for standalone DeepFM evaluation."""
+    preferred_artist_ids = {
+        int(user_row.get("top_artist_idx", -1)),
+        int(user_row.get("last_artist_idx", -1)),
+    }
+    preferred_artist_ids.discard(-1)
+
+    preferred_genre_ids = {
+        int(user_row.get("top_genre_idx", -1)),
+        int(user_row.get("last_genre_idx", -1)),
+    }
+    preferred_genre_ids.discard(-1)
+
+    candidate_frames = []
+    if preferred_artist_ids or preferred_genre_ids:
+        mask = pd.Series(False, index=item_features.index)
+        if preferred_artist_ids and "artist_idx" in item_features.columns:
+            mask |= item_features["artist_idx"].isin(preferred_artist_ids)
+        if preferred_genre_ids and "primary_genre_idx" in item_features.columns:
+            mask |= item_features["primary_genre_idx"].isin(preferred_genre_ids)
+        candidate_frames.append(item_features.loc[mask].nlargest(candidate_pool_size, "log_popularity"))
+
+    candidate_frames.append(item_features.nlargest(candidate_pool_size, "log_popularity"))
+    candidates = pd.concat(candidate_frames, ignore_index=True).drop_duplicates("track_id")
+    return candidates.head(candidate_pool_size)
+
+
+def build_deepfm_prior_bonus(user_row: pd.Series, item_row: pd.Series) -> float:
+    """Metadata prior bonus for standalone/online DeepFM scoring."""
+    return (
+        TOP_ARTIST_BONUS * build_dense_feature_value("top_artist_match", user_row, item_row)
+        + LAST_ARTIST_BONUS * build_dense_feature_value("last_artist_match", user_row, item_row)
+        + TOP_GENRE_BONUS * build_dense_feature_value("top_genre_match", user_row, item_row)
+        + LAST_GENRE_BONUS * build_dense_feature_value("last_genre_match", user_row, item_row)
+    )
+
+
 def rank_candidates(
     user_id: int,
     candidate_track_ids: list[str],
@@ -175,6 +238,7 @@ def rank_candidates(
     sparse_rows = []
     dense_rows = []
     valid_track_ids = []
+    prior_bonus = []
 
     for track_id in candidate_track_ids:
         item_row = _item_features[_item_features["track_id"] == track_id]
@@ -204,16 +268,12 @@ def rank_candidates(
         # Build dense features
         dense_vals = []
         for feat in dense_features:
-            if feat in user_row.index:
-                dense_vals.append(float(user_row[feat]))
-            elif feat in item_row.index:
-                dense_vals.append(float(item_row[feat]))
-            else:
-                dense_vals.append(0.0)
+            dense_vals.append(build_dense_feature_value(feat, user_row, item_row))
 
         sparse_rows.append(sparse_vals)
         dense_rows.append(dense_vals)
         valid_track_ids.append(track_id)
+        prior_bonus.append(build_deepfm_prior_bonus(user_row, item_row))
 
     if not valid_track_ids:
         return [(tid, 1.0) for tid in candidate_track_ids[:top_k]]
@@ -230,6 +290,7 @@ def rank_candidates(
         scores = outputs[0].flatten()
     else:
         scores = _deepfm.predict(sparse_array, dense_array)
+    scores = np.asarray(scores, dtype=np.float32) + np.asarray(prior_bonus, dtype=np.float32)
 
     # DeepFM forward already returns probabilities in [0, 1].
     # Normalize within the candidate set before blending with recall.

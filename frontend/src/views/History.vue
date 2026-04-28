@@ -7,10 +7,8 @@ import type { PlaybackHistoryItem } from '@/types'
 const player = usePlayerStore()
 const history = ref<PlaybackHistoryItem[]>([])
 const loading = ref(true)
-const page = ref(1)
-const pageSize = 50
 
-const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%231a1a2e" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%236366f1" font-size="40">♪</text></svg>'
+const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23121212" width="100" height="100"/><text x="50" y="56" text-anchor="middle" fill="%231ed760" font-size="38">♪</text></svg>'
 
 async function loadHistory() {
   loading.value = true
@@ -79,209 +77,165 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="history-page">
-    <header class="page-header animate-fade-in">
-      <h1 class="page-title gradient-text">🎵 播放历史</h1>
-      <p class="page-subtitle">最近播放的 {{ history.length }} 首歌曲</p>
+  <div class="history-page page-shell">
+    <header class="page-hero animate-fade-in">
+      <div class="page-hero-copy">
+        <span class="page-kicker">Playback Memory</span>
+        <h1 class="page-title">播放历史</h1>
+        <p class="page-subtitle">最近播放的 {{ history.length }} 首歌曲，会继续作为推荐系统的输入。</p>
+      </div>
+      <div class="page-actions">
+        <span class="pill-tag">{{ history.length }} Items</span>
+      </div>
     </header>
 
-    <div v-if="loading" class="loading-state">
-      <div v-for="i in 10" :key="i" class="skeleton-row">
-        <div class="skeleton skeleton-cover"></div>
-        <div class="skeleton skeleton-info"></div>
-        <div class="skeleton skeleton-time"></div>
-      </div>
-    </div>
-
-    <div v-else-if="history.length === 0" class="empty-state">
-      <p>暂无播放记录</p>
-      <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
-    </div>
-
-    <div v-else class="history-list animate-slide-up">
-      <div
-        v-for="item in history"
-        :key="item.interaction_id"
-        class="history-row"
-        @click="playTrack(item)"
-      >
-        <img
-          :src="item.cover_url || coverFallback"
-          :alt="item.title"
-          class="history-cover"
-        />
-        <div class="history-info">
-          <div class="history-title">{{ item.title }}</div>
-          <router-link
-            v-if="item.artist_name"
-            :to="`/artist/${encodeURIComponent(item.artist_name)}`"
-            class="history-artist history-artist-link"
-            @click.stop
-          >{{ item.artist_name }}</router-link>
-          <div v-else class="history-artist">Unknown Artist</div>
-        </div>
-        <div class="history-meta">
-          <span class="history-time">{{ formatTimestamp(item.created_at) }}</span>
-          <span v-if="item.play_duration" class="history-duration">
-            {{ formatDuration(item.play_duration) }}
-          </span>
+    <section class="section-block animate-slide-up">
+      <div class="section-top">
+        <div>
+          <h2 class="section-heading">最近播放</h2>
+          <p class="section-copy">点击任意记录即可重新开始播放。</p>
         </div>
       </div>
-    </div>
+
+      <div v-if="loading" class="row-list">
+        <div v-for="i in 8" :key="i" class="skeleton skeleton-row"></div>
+      </div>
+
+      <div v-else-if="history.length === 0" class="empty-state">
+        <p>暂无播放记录。</p>
+        <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
+      </div>
+
+      <div v-else class="history-list">
+        <button
+          v-for="item in history"
+          :key="item.interaction_id"
+          class="history-row"
+          type="button"
+          @click="playTrack(item)"
+        >
+          <img
+            :src="item.cover_url || coverFallback"
+            :alt="item.title"
+            class="history-cover"
+          />
+
+          <div class="history-info">
+            <strong class="history-title">{{ item.title }}</strong>
+            <router-link
+              v-if="item.artist_name"
+              :to="`/artist/${encodeURIComponent(item.artist_name)}`"
+              class="history-artist"
+              @click.stop
+            >
+              {{ item.artist_name }}
+            </router-link>
+            <span v-else class="history-artist">Unknown Artist</span>
+          </div>
+
+          <div class="history-meta">
+            <span class="history-time">{{ formatTimestamp(item.created_at) }}</span>
+            <span v-if="item.play_duration" class="history-duration">
+              {{ formatDuration(item.play_duration) }}
+            </span>
+          </div>
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.history-page {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.page-header {
-  margin-bottom: var(--spacing-xl);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  margin-bottom: var(--spacing-xs);
-}
-
-.page-subtitle {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-base);
-}
-
-.loading-state {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
-}
-
-.skeleton-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-md);
-  background: var(--color-bg-card);
-  border-radius: var(--radius-md);
-}
-
-.skeleton-cover {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-md);
-  flex-shrink: 0;
-}
-
-.skeleton-info {
-  flex: 1;
-  height: 40px;
-  border-radius: var(--radius-sm);
-}
-
-.skeleton-time {
-  width: 80px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-}
-
-.empty-state {
-  text-align: center;
-  padding: var(--spacing-3xl);
-  color: var(--color-text-muted);
-}
-
-.empty-state p {
-  font-size: var(--font-size-lg);
-  margin-bottom: var(--spacing-lg);
-}
-
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  background: var(--color-bg-secondary);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
+  gap: 0.625rem;
 }
 
 .history-row {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-bg-card);
-  cursor: pointer;
-  transition: background var(--transition-fast);
+  gap: 0.875rem;
+  padding: 0.875rem;
+  border-radius: 14px;
+  text-align: left;
+  background: linear-gradient(180deg, rgba(37, 37, 37, 0.95), rgba(24, 24, 24, 0.98));
+  box-shadow: var(--shadow-medium);
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .history-row:hover {
-  background: var(--color-bg-card-hover);
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, rgba(45, 45, 45, 1), rgba(31, 31, 31, 1));
 }
 
 .history-cover {
   width: 56px;
   height: 56px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   object-fit: cover;
   flex-shrink: 0;
 }
 
 .history-info {
-  flex: 1;
   min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
 }
 
 .history-title {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  color: var(--color-text-base);
+  font-size: var(--font-size-base);
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--color-text-primary);
 }
 
 .history-artist {
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.history-artist-link {
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-.history-artist-link:hover {
-  color: var(--color-accent-primary);
+.history-artist:hover {
+  color: var(--color-text-base);
 }
 
 .history-meta {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 4px;
+  gap: 0.3rem;
   flex-shrink: 0;
 }
 
-.history-time {
+.history-time,
+.history-duration {
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.history-duration {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  font-variant-numeric: tabular-nums;
+.skeleton-row {
+  width: 100%;
+  height: 82px;
 }
 
 @media (max-width: 768px) {
   .history-meta {
-    flex-direction: row;
-    gap: var(--spacing-sm);
+    align-items: flex-start;
+  }
+
+  .history-row {
+    align-items: flex-start;
   }
 }
 </style>

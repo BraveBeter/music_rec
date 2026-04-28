@@ -59,86 +59,96 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="artist-page">
-    <header class="artist-header animate-fade-in">
-      <div class="artist-avatar">
-        <img
-          v-if="tracks.length > 0 && tracks[0].cover_url"
-          :src="tracks[0].cover_url"
-          :alt="artistName"
-        />
-        <span v-else class="avatar-placeholder">🎤</span>
+  <div class="artist-page page-shell">
+    <header class="artist-hero page-hero animate-fade-in">
+      <div class="artist-summary">
+        <div class="artist-avatar">
+          <img
+            v-if="tracks.length > 0 && tracks[0].cover_url"
+            :src="tracks[0].cover_url"
+            :alt="artistName"
+          />
+          <span v-else class="artist-avatar-fallback">A</span>
+        </div>
+
+        <div class="page-hero-copy">
+          <span class="page-kicker">Artist Spotlight</span>
+          <h1 class="page-title">{{ artistName }}</h1>
+          <p class="page-subtitle">共收录 {{ total }} 首歌曲，可直接从下方列表接入播放器。</p>
+        </div>
       </div>
-      <div class="artist-meta">
-        <h1 class="artist-name gradient-text">{{ artistName }}</h1>
-        <p class="artist-stats">{{ total }} 首歌曲</p>
+
+      <div class="page-actions">
+        <span class="pill-tag">{{ total }} Tracks</span>
+        <button
+          v-if="auth.isLoggedIn"
+          :class="['artist-fav-btn', { active: artistFav.isFavorited(artistName) }]"
+          @click="toggleFavorite"
+        >
+          {{ artistFav.isFavorited(artistName) ? '已收藏' : '收藏歌手' }}
+        </button>
       </div>
-      <button
-        v-if="auth.isLoggedIn"
-        :class="['btn-fav', { active: artistFav.isFavorited(artistName) }]"
-        @click="toggleFavorite"
-      >
-        {{ artistFav.isFavorited(artistName) ? '❤️ 已收藏' : '🤍 收藏歌手' }}
-      </button>
     </header>
 
-    <section class="section animate-slide-up">
-      <div v-if="loading" class="loading-state">
-        <div v-for="i in 6" :key="i" class="skeleton skeleton-row" />
+    <section class="section-block animate-slide-up">
+      <div class="section-top">
+        <div>
+          <h2 class="section-heading">热门曲目</h2>
+          <p class="section-copy">不改变数据逻辑，只重排信息层级，便于快速开播。</p>
+        </div>
+      </div>
+
+      <div v-if="loading" class="row-list">
+        <div v-for="i in 6" :key="i" class="skeleton skeleton-row"></div>
       </div>
 
       <template v-else>
-        <div v-if="tracks.length === 0" class="empty-state">
-          <p>该歌手暂无曲目</p>
+        <div v-if="tracks.length" class="row-list">
+          <TrackCard
+            v-for="track in tracks"
+            :key="track.track_id"
+            :track="track"
+            :tracks="tracks"
+          />
         </div>
-        <template v-else>
-          <div class="track-list">
-            <TrackCard
-              v-for="track in tracks"
-              :key="track.track_id"
-              :track="track"
-              :tracks="tracks"
-            />
-          </div>
 
-          <div class="pagination" v-if="total > pageSize">
-            <button class="btn-secondary" @click="prevPage" :disabled="page <= 1">← 上一页</button>
-            <span class="page-info">{{ page }} / {{ Math.ceil(total / pageSize) }}</span>
-            <button class="btn-secondary" @click="nextPage" :disabled="page * pageSize >= total">下一页 →</button>
-          </div>
-        </template>
+        <div v-else class="empty-state">
+          <p>该歌手暂无曲目。</p>
+        </div>
+
+        <div class="pagination" v-if="total > pageSize">
+          <button class="btn-secondary" :disabled="page <= 1" @click="prevPage">上一页</button>
+          <span class="page-info">{{ page }} / {{ Math.ceil(total / pageSize) }}</span>
+          <button class="btn-secondary" :disabled="page * pageSize >= total" @click="nextPage">下一页</button>
+        </div>
       </template>
     </section>
   </div>
 </template>
 
 <style scoped>
-.artist-page {
-  max-width: 900px;
-  margin: 0 auto;
+.artist-hero {
+  align-items: center;
 }
 
-.artist-header {
+.artist-summary {
   display: flex;
   align-items: center;
-  gap: var(--spacing-lg);
-  margin-bottom: var(--spacing-2xl);
-  padding: var(--spacing-xl);
-  background: var(--color-bg-card);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--color-border);
+  gap: 1rem;
+  min-width: 0;
 }
 
 .artist-avatar {
-  width: 80px;
-  height: 80px;
-  border-radius: var(--radius-full);
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
   overflow: hidden;
-  flex-shrink: 0;
-  background: var(--color-bg-secondary);
+  background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 100%);
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-heavy);
 }
 
 .artist-avatar img {
@@ -147,84 +157,67 @@ onMounted(() => {
   object-fit: cover;
 }
 
-.avatar-placeholder {
+.artist-avatar-fallback {
+  color: var(--color-accent);
   font-size: 2rem;
-}
-
-.artist-meta {
-  flex: 1;
-}
-
-.artist-name {
-  font-size: var(--font-size-2xl);
   font-weight: 700;
-  margin-bottom: var(--spacing-xs);
 }
 
-.artist-stats {
-  color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
-}
-
-.btn-fav {
-  padding: var(--spacing-sm) var(--spacing-lg);
-  border-radius: var(--radius-full);
-  border: 1px solid var(--color-border);
+.artist-fav-btn {
+  min-height: 42px;
+  padding: 0 1.2rem;
+  border-radius: var(--radius-pill-full);
   background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  transition: all var(--transition-fast);
-  white-space: nowrap;
+  color: var(--color-text-base);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow: inset 0 0 0 1px var(--color-border-light);
+  transition:
+    transform var(--transition-fast),
+    color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
-.btn-fav:hover {
-  border-color: var(--color-accent-primary);
+.artist-fav-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 0 0 1px var(--color-accent-border);
 }
 
-.btn-fav.active {
-  border-color: #ef4444;
-  color: #ef4444;
-  background: rgba(239, 68, 68, 0.1);
-}
-
-.section {
-  margin-bottom: var(--spacing-2xl);
-}
-
-.loading-state {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-sm);
+.artist-fav-btn.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  box-shadow: inset 0 0 0 1px rgba(30, 215, 96, 0.25);
 }
 
 .skeleton-row {
-  height: 64px;
-  border-radius: var(--radius-md);
-}
-
-.track-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  width: 100%;
+  height: 80px;
 }
 
 .pagination {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: var(--spacing-lg);
-  margin-top: var(--spacing-xl);
+  gap: 1rem;
+  margin-top: 1rem;
 }
 
 .page-info {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
 }
 
-.empty-state {
-  text-align: center;
-  padding: var(--spacing-2xl);
-  color: var(--color-text-muted);
+@media (max-width: 768px) {
+  .artist-summary {
+    align-items: flex-start;
+  }
+
+  .artist-avatar {
+    width: 76px;
+    height: 76px;
+  }
 }
 </style>

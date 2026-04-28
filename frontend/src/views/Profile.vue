@@ -44,178 +44,209 @@ async function saveProfile() {
     })
     auth.setAuth(auth.accessToken!, data)
     saved.value = true
-    setTimeout(() => { saved.value = false }, 2000)
+    setTimeout(() => {
+      saved.value = false
+    }, 2000)
   } catch (e) {
     console.error('Failed to save profile:', e)
   } finally {
     saving.value = false
   }
 }
-
-const genderLabels: Record<number, string> = { 0: '未指定', 1: '男', 2: '女' }
 </script>
 
 <template>
-  <div class="profile-page">
-    <header class="page-header animate-fade-in">
-      <h1 class="page-title gradient-text">👤 个人中心</h1>
+  <div class="profile-page page-shell">
+    <header class="page-hero animate-fade-in">
+      <div class="profile-hero-copy">
+        <div class="profile-avatar">
+          {{ auth.user?.username?.charAt(0).toUpperCase() }}
+        </div>
+        <div class="page-hero-copy">
+          <span class="page-kicker">Profile</span>
+          <h1 class="page-title">{{ auth.user?.username }}</h1>
+          <p class="page-subtitle">
+            {{ auth.user?.role === 'admin' ? '管理员账号' : '普通用户账号' }}，可在此维护个人资料并查看使用概况。
+          </p>
+        </div>
+      </div>
+
+      <div class="page-actions">
+        <span class="pill-tag">{{ auth.user?.role === 'admin' ? 'Admin' : 'Listener' }}</span>
+      </div>
     </header>
 
-    <div class="profile-card glass animate-slide-up">
-      <div class="profile-avatar">
-        {{ auth.user?.username?.charAt(0).toUpperCase() }}
-      </div>
-      <h2 class="profile-username">{{ auth.user?.username }}</h2>
-      <span class="profile-role">{{ auth.user?.role === 'admin' ? '管理员' : '普通用户' }}</span>
-
-      <form @submit.prevent="saveProfile" class="profile-form">
-        <div class="form-group">
-          <label for="profile-age">年龄</label>
-          <input id="profile-age" v-model.number="profile.age" type="number" min="10" max="120" placeholder="年龄" />
+    <div class="profile-layout animate-slide-up">
+      <section class="content-panel profile-panel">
+        <div class="section-top">
+          <div>
+            <h2 class="section-heading">个人资料</h2>
+            <p class="section-copy">只调整展示层，不改变保存行为和字段结构。</p>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label for="profile-gender">性别</label>
-          <select id="profile-gender" v-model="profile.gender">
-            <option :value="null">未指定</option>
-            <option :value="1">男</option>
-            <option :value="2">女</option>
-          </select>
+        <form class="profile-form" @submit.prevent="saveProfile">
+          <label class="form-group">
+            <span>年龄</span>
+            <input id="profile-age" v-model.number="profile.age" type="number" min="10" max="120" placeholder="年龄" />
+          </label>
+
+          <label class="form-group">
+            <span>性别</span>
+            <select id="profile-gender" v-model="profile.gender">
+              <option :value="null">未指定</option>
+              <option :value="1">男</option>
+              <option :value="2">女</option>
+            </select>
+          </label>
+
+          <label class="form-group">
+            <span>国家 / 地区</span>
+            <input id="profile-country" v-model="profile.country" type="text" placeholder="例如 China" />
+          </label>
+
+          <button type="submit" class="btn-primary profile-submit" :disabled="saving">
+            {{ saving ? '保存中' : saved ? '已保存' : '保存修改' }}
+          </button>
+        </form>
+      </section>
+
+      <section class="stats-panel">
+        <router-link to="/history" class="stat-card">
+          <span class="stat-kicker">History</span>
+          <strong class="stat-value">{{ stats.play_count ?? '--' }}</strong>
+          <span class="stat-label">播放次数</span>
+        </router-link>
+
+        <router-link to="/favorites" class="stat-card">
+          <span class="stat-kicker">Favorites</span>
+          <strong class="stat-value">{{ stats.favorites_count ?? '--' }}</strong>
+          <span class="stat-label">收藏歌曲</span>
+        </router-link>
+
+        <div class="stat-card">
+          <span class="stat-kicker">Days</span>
+          <strong class="stat-value">{{ stats.days_registered ?? '--' }}</strong>
+          <span class="stat-label">注册天数</span>
         </div>
-
-        <div class="form-group">
-          <label for="profile-country">国家/地区</label>
-          <input id="profile-country" v-model="profile.country" type="text" placeholder="例如: China" />
-        </div>
-
-        <button type="submit" class="btn-primary" :disabled="saving" style="width: 100%;">
-          {{ saving ? '保存中...' : saved ? '✓ 已保存' : '保存修改' }}
-        </button>
-      </form>
-    </div>
-
-    <div class="profile-stats animate-slide-up" style="animation-delay: 100ms;">
-      <router-link to="/history" class="stat-card card stat-card-link">
-        <div class="stat-value gradient-text">{{ stats.play_count ?? '--' }}</div>
-        <div class="stat-label">播放次数</div>
-      </router-link>
-      <router-link to="/favorites" class="stat-card card stat-card-link">
-        <div class="stat-value gradient-text">{{ stats.favorites_count ?? '--' }}</div>
-        <div class="stat-label">收藏歌曲</div>
-      </router-link>
-      <div class="stat-card card">
-        <div class="stat-value gradient-text">{{ stats.days_registered ?? '--' }}</div>
-        <div class="stat-label">注册天数</div>
-      </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.profile-page {
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-.page-header {
-  margin-bottom: var(--spacing-xl);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-}
-
-.profile-card {
-  padding: var(--spacing-2xl);
-  border-radius: var(--radius-xl);
-  text-align: center;
-  margin-bottom: var(--spacing-xl);
+.profile-hero-copy {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
 }
 
 .profile-avatar {
-  width: 80px;
-  height: 80px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent-gradient);
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #2a2a2a 0%, #171717 100%);
+  color: var(--color-accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--font-size-3xl);
+  font-size: 1.8rem;
   font-weight: 700;
-  color: white;
-  margin: 0 auto var(--spacing-md);
+  flex-shrink: 0;
+  box-shadow: var(--shadow-heavy);
 }
 
-.profile-username {
-  font-size: var(--font-size-xl);
-  font-weight: 600;
-  margin-bottom: var(--spacing-xs);
+.profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.9fr);
+  gap: 1rem;
 }
 
-.profile-role {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  background: var(--color-bg-card);
-  padding: 2px 8px;
-  border-radius: var(--radius-sm);
+.profile-panel {
+  padding: 1.25rem;
 }
 
 .profile-form {
-  margin-top: var(--spacing-xl);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
-  text-align: left;
+  gap: 0.875rem;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
-}
-
-.form-group label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  gap: 0.4rem;
   color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
-.form-group input,
-.form-group select {
-  padding: 0.65rem var(--spacing-md);
+.profile-submit {
+  width: 100%;
+  margin-top: 0.25rem;
 }
 
-.profile-stats {
+.stats-panel {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: var(--spacing-md);
+  gap: 1rem;
 }
 
 .stat-card {
-  text-align: center;
-  padding: var(--spacing-lg);
+  padding: 1.25rem;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(37, 37, 37, 0.98), rgba(24, 24, 24, 0.98));
+  box-shadow: var(--shadow-heavy);
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.stat-card:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, rgba(45, 45, 45, 1), rgba(31, 31, 31, 1));
+}
+
+.stat-kicker {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-badge);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
 .stat-value {
-  font-size: var(--font-size-2xl);
+  color: var(--color-text-base);
+  font-family: var(--font-title);
+  font-size: 2rem;
   font-weight: 700;
+  line-height: 1;
 }
 
 .stat-label {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  margin-top: var(--spacing-xs);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 
-.stat-card-link {
-  text-decoration: none;
-  transition: all var(--transition-fast);
-  cursor: pointer;
+@media (max-width: 960px) {
+  .profile-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
-.stat-card-link:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-glow);
+@media (max-width: 768px) {
+  .profile-hero-copy {
+    align-items: flex-start;
+  }
+
+  .profile-avatar {
+    width: 72px;
+    height: 72px;
+    font-size: 1.5rem;
+  }
 }
 </style>

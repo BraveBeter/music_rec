@@ -15,7 +15,7 @@ const router = useRouter()
 
 const isFav = () => artistFav.isFavorited(props.artist.artist_name)
 
-const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%231a1a2e" width="100" height="100"/><text x="50" y="58" text-anchor="middle" fill="%236366f1" font-size="35">🎤</text></svg>'
+const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23121212" width="100" height="100"/><text x="50" y="58" text-anchor="middle" fill="%231ed760" font-size="28">A</text></svg>'
 
 function goToArtist() {
   router.push(`/artist/${encodeURIComponent(props.artist.artist_name)}`)
@@ -36,16 +36,18 @@ async function toggleFav() {
         class="artist-cover-img"
       />
     </div>
+
     <div class="artist-info">
-      <div class="artist-name">{{ artist.artist_name }}</div>
+      <strong class="artist-name">{{ artist.artist_name }}</strong>
       <div class="artist-count">{{ artist.track_count }} 首歌曲</div>
     </div>
+
     <button
       v-if="showFavorite && auth.isLoggedIn"
       :class="['fav-btn', { liked: isFav() }]"
       @click.stop="toggleFav"
     >
-      {{ isFav() ? '❤️' : '🤍' }}
+      {{ isFav() ? '♥' : '♡' }}
     </button>
   </div>
 </template>
@@ -54,21 +56,26 @@ async function toggleFav() {
 .artist-card {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-md);
+  gap: 0.875rem;
+  padding: 0.875rem;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(37, 37, 37, 0.95), rgba(24, 24, 24, 0.98));
+  box-shadow: var(--shadow-medium);
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .artist-card:hover {
-  background: var(--color-bg-card-hover);
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, rgba(45, 45, 45, 0.98), rgba(31, 31, 31, 1));
 }
 
 .artist-cover-wrapper {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-full);
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -82,31 +89,47 @@ async function toggleFav() {
 .artist-info {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
 }
 
 .artist-name {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  color: var(--color-text-base);
+  font-size: var(--font-size-base);
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .artist-count {
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
 }
 
 .fav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-bg-surface-strong);
+  color: var(--color-text-secondary);
   font-size: 1rem;
-  background: none;
-  border: none;
-  cursor: pointer;
-  transition: transform var(--transition-fast);
-  padding: 4px;
+  transition:
+    transform var(--transition-fast),
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .fav-btn:hover {
-  transform: scale(1.2);
+  transform: scale(1.06);
+  color: var(--color-text-base);
+}
+
+.fav-btn.liked {
+  color: var(--color-accent);
 }
 </style>

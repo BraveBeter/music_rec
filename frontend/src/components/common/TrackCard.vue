@@ -29,7 +29,7 @@ async function toggleLike() {
   if (nowLiked) {
     interactionsApi.log({
       track_id: props.track.track_id,
-      interaction_type: 2, // like
+      interaction_type: 2,
     }).catch(() => {})
   }
 }
@@ -42,9 +42,8 @@ function formatDuration(ms: number | null): string {
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%231a1a2e" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%236366f1" font-size="40">♪</text></svg>'
-const isCurrentlyPlaying = () =>
-  player.currentTrack?.track_id === props.track.track_id && player.isPlaying
+const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23121212" width="100" height="100"/><text x="50" y="56" text-anchor="middle" fill="%231ed760" font-size="38">♪</text></svg>'
+const isCurrentlyPlaying = () => player.currentTrack?.track_id === props.track.track_id && player.isPlaying
 </script>
 
 <template>
@@ -58,15 +57,19 @@ const isCurrentlyPlaying = () =>
         :alt="track.title"
         class="track-cover-img"
       />
-      <div class="play-overlay">
+      <div class="play-overlay" aria-hidden="true">
         <span class="play-icon">{{ isCurrentlyPlaying() ? '⏸' : '▶' }}</span>
       </div>
-      <div v-if="showScore && track.score" class="score-badge">
-        {{ (track.score * 100).toFixed(0) }}
-      </div>
     </div>
+
     <div class="track-details">
-      <div class="track-name">{{ track.title }}</div>
+      <div class="track-heading">
+        <strong class="track-name">{{ track.title }}</strong>
+        <span v-if="showScore && track.score" class="score-badge">
+          Match {{ (track.score * 100).toFixed(0) }}
+        </span>
+      </div>
+
       <router-link
         v-if="track.artist_name"
         :to="`/artist/${encodeURIComponent(track.artist_name)}`"
@@ -77,15 +80,16 @@ const isCurrentlyPlaying = () =>
       </router-link>
       <div v-else class="track-artist-name">Unknown Artist</div>
     </div>
+
     <div class="track-actions" @click.stop>
       <span class="track-duration">{{ formatDuration(track.duration_ms) }}</span>
       <button
         v-if="auth.isLoggedIn"
         :class="['like-btn', { liked: isLiked }]"
-        @click="toggleLike"
         :title="isLiked ? '取消收藏' : '收藏'"
+        @click="toggleLike"
       >
-        {{ isLiked ? '❤️' : '🤍' }}
+        {{ isLiked ? '♥' : '♡' }}
       </button>
     </div>
   </div>
@@ -95,26 +99,34 @@ const isCurrentlyPlaying = () =>
 .track-card {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-md);
+  gap: 0.875rem;
+  padding: 0.75rem 0.875rem;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(37, 37, 37, 0.95), rgba(24, 24, 24, 0.98));
+  box-shadow: var(--shadow-medium);
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
 .track-card:hover {
-  background: var(--color-bg-card-hover);
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, rgba(45, 45, 45, 0.98), rgba(31, 31, 31, 1));
 }
 
 .track-card.is-playing {
-  background: rgba(99, 102, 241, 0.1);
+  box-shadow:
+    inset 3px 0 0 var(--color-accent),
+    var(--shadow-medium);
 }
 
 .track-cover-wrapper {
   position: relative;
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-sm);
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -128,106 +140,128 @@ const isCurrentlyPlaying = () =>
 .play-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.45);
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
-.track-card:hover .play-overlay {
+.track-card:hover .play-overlay,
+.track-card.is-playing .play-overlay {
   opacity: 1;
 }
 
 .play-icon {
-  font-size: 1.2rem;
-  color: white;
-}
-
-.score-badge {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  background: var(--color-accent-gradient);
-  color: white;
-  font-size: 0.6rem;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #000000;
+  font-size: 0.9rem;
 }
 
 .track-details {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.track-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
 }
 
 .track-name {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  color: var(--color-text-base);
+  font-size: var(--font-size-base);
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .track-card.is-playing .track-name {
-  color: var(--color-accent-primary);
+  color: var(--color-accent);
 }
 
-.track-artist-link {
+.track-artist-link,
+.track-artist-name {
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-decoration: none;
-  transition: color var(--transition-fast);
 }
 
 .track-artist-link:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-text-base);
 }
 
-.track-artist-name {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.score-badge {
+  flex-shrink: 0;
+  padding: 0.18rem 0.45rem;
+  border-radius: var(--radius-pill-full);
+  background: rgba(30, 215, 96, 0.16);
+  color: var(--color-accent);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .track-actions {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: 0.625rem;
+  flex-shrink: 0;
 }
 
 .track-duration {
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .like-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--color-bg-surface-strong);
+  color: var(--color-text-secondary);
   font-size: 1rem;
-  background: none;
-  border: none;
-  cursor: pointer;
-  transition: transform var(--transition-fast);
-  padding: 4px;
+  transition:
+    transform var(--transition-fast),
+    color var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
 .like-btn:hover {
-  transform: scale(1.2);
+  transform: scale(1.06);
+  color: var(--color-text-base);
 }
 
 .like-btn.liked {
-  animation: heartBeat 0.3s ease;
+  color: var(--color-accent);
 }
 
-@keyframes heartBeat {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.3); }
-  100% { transform: scale(1); }
+@media (max-width: 768px) {
+  .track-card {
+    padding: 0.75rem;
+  }
+
+  .score-badge {
+    display: none;
+  }
 }
 </style>

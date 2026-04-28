@@ -49,162 +49,207 @@ async function handleRegister() {
 </script>
 
 <template>
-  <div class="auth-page">
-    <div class="auth-container animate-fade-in">
-      <div class="auth-card glass">
+  <div class="auth-page page-shell">
+    <div class="auth-layout animate-fade-in">
+      <section class="auth-intro">
+        <span class="page-kicker">Create Account</span>
+        <h1 class="auth-title">把偏好、收藏和推荐留在同一个账号里。</h1>
+        <p class="auth-copy">
+          注册后即可获得个性化推荐，并用更一致的播放器界面持续浏览、收藏和回放喜欢的音乐。
+        </p>
+        <div class="auth-tags">
+          <span class="pill-tag">Library</span>
+          <span class="pill-tag">Profile</span>
+          <span class="pill-tag pill-tag--accent">Recommendations</span>
+        </div>
+      </section>
+
+      <section class="auth-card glass">
         <div class="auth-header">
-          <span class="auth-logo">🎵</span>
-          <h1 class="gradient-text">注册 MusicRec</h1>
-          <p class="auth-subtitle">创建账号，开启个性化音乐之旅</p>
+          <span class="page-kicker">Sign Up</span>
+          <h2 class="auth-form-title">注册 MusicRec</h2>
+          <p class="auth-subtitle">创建账号后即可进入首页开始个性化浏览。</p>
         </div>
 
-        <form @submit.prevent="handleRegister" class="auth-form">
-          <div class="form-group">
-            <label for="reg-username">用户名 *</label>
+        <form class="auth-form" @submit.prevent="handleRegister">
+          <label class="form-group">
+            <span>用户名 *</span>
             <input id="reg-username" v-model="form.username" type="text" placeholder="请输入用户名" />
-          </div>
+          </label>
 
-          <div class="form-group">
-            <label for="reg-password">密码 *</label>
-            <input id="reg-password" v-model="form.password" type="password" placeholder="至少6个字符" />
-          </div>
+          <label class="form-group">
+            <span>密码 *</span>
+            <input id="reg-password" v-model="form.password" type="password" placeholder="至少 6 个字符" />
+          </label>
 
-          <div class="form-group">
-            <label for="reg-confirm">确认密码 *</label>
+          <label class="form-group">
+            <span>确认密码 *</span>
             <input id="reg-confirm" v-model="form.confirmPassword" type="password" placeholder="再次输入密码" />
-          </div>
+          </label>
 
           <div class="form-row">
-            <div class="form-group">
-              <label for="reg-age">年龄</label>
-              <input id="reg-age" v-model.number="form.age" type="number" placeholder="年龄" min="10" max="120" />
-            </div>
-            <div class="form-group">
-              <label for="reg-gender">性别</label>
+            <label class="form-group">
+              <span>年龄</span>
+              <input id="reg-age" v-model.number="form.age" type="number" min="10" max="120" placeholder="年龄" />
+            </label>
+
+            <label class="form-group">
+              <span>性别</span>
               <select id="reg-gender" v-model="form.gender">
                 <option :value="null">不指定</option>
                 <option :value="1">男</option>
                 <option :value="2">女</option>
               </select>
-            </div>
+            </label>
           </div>
 
-          <div class="form-group">
-            <label for="reg-country">国家/地区</label>
-            <input id="reg-country" v-model="form.country" type="text" placeholder="例如: China" />
-          </div>
+          <label class="form-group">
+            <span>国家 / 地区</span>
+            <input id="reg-country" v-model="form.country" type="text" placeholder="例如 China" />
+          </label>
 
           <div v-if="error" class="error-msg">{{ error }}</div>
 
           <button type="submit" class="btn-primary auth-submit" :disabled="loading">
-            {{ loading ? '注册中...' : '立即注册' }}
+            {{ loading ? '注册中' : '立即注册' }}
           </button>
         </form>
 
         <div class="auth-footer">
-          已有账号？ <router-link to="/login">去登录</router-link>
+          已有账号？
+          <router-link to="/login">去登录</router-link>
         </div>
-      </div>
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
 .auth-page {
+  min-height: calc(100vh - var(--player-height) - 3rem);
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: calc(100vh - var(--player-height));
-  padding: var(--spacing-xl);
 }
 
-.auth-container {
+.auth-layout {
   width: 100%;
-  max-width: 420px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, 460px);
+  gap: 1.25rem;
+  align-items: stretch;
 }
 
+.auth-intro,
 .auth-card {
-  padding: var(--spacing-2xl);
-  border-radius: var(--radius-xl);
+  padding: 1.75rem;
+  border-radius: 24px;
+  box-shadow: var(--shadow-heavy);
+}
+
+.auth-intro {
+  background:
+    linear-gradient(180deg, rgba(45, 45, 45, 0.92), rgba(24, 24, 24, 0.98));
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.auth-title {
+  font-family: var(--font-title);
+  font-size: clamp(1.85rem, 2.8vw, 3rem);
+  font-weight: 700;
+  line-height: 0.98;
+}
+
+.auth-copy {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  max-width: 42ch;
+}
+
+.auth-tags {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .auth-header {
-  text-align: center;
-  margin-bottom: var(--spacing-xl);
+  margin-bottom: 1.1rem;
 }
 
-.auth-logo {
-  font-size: 3rem;
-  display: block;
-  margin-bottom: var(--spacing-md);
-}
-
-.auth-header h1 {
-  font-size: var(--font-size-2xl);
+.auth-form-title {
+  font-family: var(--font-title);
+  font-size: 1.5rem;
   font-weight: 700;
-  margin-bottom: var(--spacing-xs);
+  margin-top: 0.35rem;
 }
 
 .auth-subtitle {
-  color: var(--color-text-muted);
+  margin-top: 0.35rem;
+  color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
 
 .auth-form {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-md);
+  gap: 0.875rem;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
-}
-
-.form-group label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  gap: 0.4rem;
   color: var(--color-text-secondary);
-}
-
-.form-group input,
-.form-group select {
-  padding: 0.65rem var(--spacing-md);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
 }
 
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--spacing-md);
+  gap: 0.875rem;
 }
 
 .error-msg {
-  color: var(--color-error);
-  font-size: var(--font-size-sm);
-  text-align: center;
-  padding: var(--spacing-sm);
-  background: rgba(239, 68, 68, 0.1);
-  border-radius: var(--radius-sm);
+  border-radius: 14px;
+  padding: 0.75rem 0.875rem;
+  background: rgba(243, 114, 127, 0.12);
+  color: var(--color-text-negative);
+  font-size: var(--font-size-xs);
 }
 
 .auth-submit {
   width: 100%;
-  padding: 0.85rem;
-  font-size: var(--font-size-base);
-  margin-top: var(--spacing-sm);
-}
-
-.auth-submit:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
+  margin-top: 0.25rem;
 }
 
 .auth-footer {
-  text-align: center;
-  margin-top: var(--spacing-lg);
+  margin-top: 1rem;
+  color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+}
+
+.auth-footer a {
+  color: var(--color-text-base);
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .auth-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-intro {
+    min-height: 220px;
+  }
+}
+
+@media (max-width: 640px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

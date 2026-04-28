@@ -62,3 +62,4 @@ record/
 
 # Local tests are not tracked in this repository
 tests/
+.pytest_cache/

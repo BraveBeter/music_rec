@@ -25,6 +25,9 @@ _user2idx = None
 _track2idx = None
 _onnx_session = None
 
+RANKER_RECALL_WEIGHT = 0.85
+RANKER_DEEPFM_WEIGHT = 0.15
+
 
 def _load_deepfm():
     """Lazy-load DeepFM model."""
@@ -100,6 +103,17 @@ def _load_features():
         logger.info(f"Loaded features: {len(_user_features)} users, {len(_item_features)} items")
     except Exception as e:
         logger.warning(f"Failed to load features: {e}")
+
+
+def _minmax_normalize(values: np.ndarray) -> np.ndarray:
+    """Normalize a score array to [0, 1]."""
+    if values.size == 0:
+        return values
+    min_val = float(values.min())
+    max_val = float(values.max())
+    if max_val - min_val < 1e-8:
+        return np.ones_like(values, dtype=np.float32)
+    return ((values - min_val) / (max_val - min_val)).astype(np.float32)
 
 
 def rank_candidates(
@@ -217,10 +231,10 @@ def rank_candidates(
     else:
         scores = _deepfm.predict(sparse_array, dense_array)
 
-    # Normalize DeepFM scores to [0, 1] via sigmoid for stable blending
-    scores = 1.0 / (1.0 + np.exp(-scores))
+    # DeepFM forward already returns probabilities in [0, 1].
+    # Normalize within the candidate set before blending with recall.
+    scores = _minmax_normalize(np.asarray(scores, dtype=np.float32))
 
-    # Normalize recall scores to [0, 1] for fair comparison
     if recall_scores:
         recall_vals = list(recall_scores.values())
         r_min, r_max = min(recall_vals), max(recall_vals)
@@ -230,8 +244,8 @@ def rank_candidates(
         }
         for i, track_id in enumerate(valid_track_ids):
             recall_score = normalized_recall.get(track_id, 0.0)
-            # 70% DeepFM + 30% recall
-            scores[i] = scores[i] * 0.7 + recall_score * 0.3
+            # Online ranking should be conservative: strong recall, light model correction.
+            scores[i] = recall_score * RANKER_RECALL_WEIGHT + scores[i] * RANKER_DEEPFM_WEIGHT
 
     # Sort and return top-K
     ranked = sorted(zip(valid_track_ids, scores), key=lambda x: x[1], reverse=True)

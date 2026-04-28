@@ -38,7 +38,7 @@ class SASRecDataset(Dataset):
         self.track2idx = track2idx
         self.samples = []
         # Collect all positive items for hard-negative sampling
-        self.all_items = list(range(self.num_items))
+        self.all_items = np.arange(1, self.num_items + 1)
 
         for user_id, seq in sequences.items():
             # Convert to indices (+1 offset to avoid padding collision)
@@ -58,22 +58,23 @@ class SASRecDataset(Dataset):
             for end_pos in range(2, len(deduped)):
                 input_seq = deduped[:end_pos]
                 target = deduped[end_pos]
-                self.samples.append((input_seq, target))
+                self.samples.append((input_seq, target, set(deduped)))
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        input_seq, target = self.samples[idx]
+        input_seq, target, positive_items = self.samples[idx]
 
-        # Pad / truncate to max_len
+        # Pad / truncate to max_len. Right padding avoids fully-masked rows
+        # when causal attention is combined with a key padding mask.
         seq = input_seq[-self.max_len:]
         pad_len = self.max_len - len(seq)
-        padded = [0] * pad_len + seq  # left-pad with 0 (padding token)
+        padded = seq + ([0] * pad_len)
 
-        # Negative sampling: 50% random, 50% hard (random item ≠ target)
-        neg = np.random.randint(1, self.num_items + 1)  # +1 offset range
-        while neg == target:
+        # Negative sampling: avoid every item already seen in the user's history.
+        neg = np.random.randint(1, self.num_items + 1)
+        while neg in positive_items:
             neg = np.random.randint(1, self.num_items + 1)
 
         return (
@@ -111,9 +112,21 @@ class SASRecBlock(nn.Module):
         self.ffn = PointWiseFeedForward(hidden_dim, ff_dim, dropout)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: torch.Tensor | None = None,
+        padding_mask: torch.Tensor | None = None,
+    ):
         # Self-attention with causal mask
-        attn_out, _ = self.attention(x, x, x, attn_mask=mask)
+        attn_out, _ = self.attention(
+            x,
+            x,
+            x,
+            attn_mask=mask,
+            key_padding_mask=padding_mask,
+            need_weights=False,
+        )
         x = self.norm1(x + self.dropout(attn_out))
         ff_out = self.ffn(x)
         x = self.norm2(x + ff_out)
@@ -168,6 +181,19 @@ class SASRec(nn.Module):
         mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
         return mask
 
+    def _get_last_hidden(
+        self,
+        input_seq: torch.Tensor,
+        seq_output: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Return the representation of the last non-padding token for each sequence."""
+        if seq_output is None:
+            seq_output = self.forward(input_seq)
+        lengths = input_seq.ne(0).sum(dim=1).clamp(min=1)
+        last_indices = lengths - 1
+        batch_indices = torch.arange(input_seq.size(0), device=input_seq.device)
+        return seq_output[batch_indices, last_indices, :]
+
     def forward(self, input_seq: torch.Tensor) -> torch.Tensor:
         """
         Args:
@@ -177,9 +203,12 @@ class SASRec(nn.Module):
         """
         batch_size, seq_len = input_seq.shape
 
+        padding_mask = input_seq.eq(0)
+
         # Embeddings
         positions = torch.arange(seq_len, device=input_seq.device).unsqueeze(0)
         x = self.item_embedding(input_seq) + self.positional_embedding(positions)
+        x = x.masked_fill(padding_mask.unsqueeze(-1), 0.0)
         x = self.dropout(self.norm(x))
 
         # Causal mask
@@ -187,7 +216,7 @@ class SASRec(nn.Module):
 
         # Transformer blocks
         for block in self.blocks:
-            x = block(x, mask)
+            x = block(x, mask, padding_mask)
 
         return x
 
@@ -202,8 +231,7 @@ class SASRec(nn.Module):
             scores: (batch, num_candidates) or (batch, num_items)
         """
         seq_output = self.forward(input_seq)  # (batch, max_len, hidden)
-        # Use last position output as user representation
-        last_output = seq_output[:, -1, :]  # (batch, hidden)
+        last_output = self._get_last_hidden(input_seq, seq_output)  # (batch, hidden)
 
         if candidate_items is not None:
             item_emb = self.item_embedding(candidate_items)  # (batch, num_cand, hidden)
@@ -279,7 +307,7 @@ class SASRecRecommender:
 
                 optimizer.zero_grad()
                 seq_output = self.model(seq)
-                last_hidden = seq_output[:, -1, :]  # (batch, hidden)
+                last_hidden = self.model._get_last_hidden(seq, seq_output)  # (batch, hidden)
 
                 pos_emb = self.model.item_embedding(pos)  # (batch, hidden)
                 neg_emb = self.model.item_embedding(neg)  # (batch, hidden)
@@ -306,7 +334,7 @@ class SASRecRecommender:
                 for seq, pos, neg in val_loader:
                     seq, pos, neg = seq.to(self.device), pos.to(self.device), neg.to(self.device)
                     seq_output = self.model(seq)
-                    last_hidden = seq_output[:, -1, :]
+                    last_hidden = self.model._get_last_hidden(seq, seq_output)
                     pos_emb = self.model.item_embedding(pos)
                     neg_emb = self.model.item_embedding(neg)
                     pos_score = (last_hidden * pos_emb).sum(dim=-1)
@@ -367,7 +395,7 @@ class SASRecRecommender:
         # Pad/truncate
         padded = deduped[-MAX_SEQ_LEN:]
         pad_len = MAX_SEQ_LEN - len(padded)
-        padded = [0] * pad_len + padded
+        padded = padded + ([0] * pad_len)
 
         with torch.no_grad():
             input_tensor = torch.tensor([padded], dtype=torch.long).to(self.device)

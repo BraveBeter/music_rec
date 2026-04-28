@@ -126,9 +126,10 @@ admin-web/                               # [目录] Vue 3 管理前端
 
 #### Training.vue - 训练控制
 - 训练按钮组（预处理、特征工程、各模型训练、评测）
-- SSE 实时进度显示
+- SSE 实时进度显示（DeepFM / SASRec 按 Epoch 增量更新）
 - 训练历史列表
 - LogDialog 集成（查看日志和评测结果）
+- 取消任务后训练脚本会在下一个安全检查点停止，并跳过后续评测与版本登记
 
 #### Models.vue - 模型管理
 - 模型可用性网格展示
@@ -211,12 +212,26 @@ data/
 
 ```json
 {
-  "task_id": "20250421_123456_preprocess",
+  "task_id": "train_deepfm_20260428_094420",
+  "task_type": "train_deepfm",
   "status": "running",
-  "progress": 45,
-  "message": "Processing user interactions...",
-  "start_time": "2025-04-21T12:34:56Z",
-  "logs": ["Starting preprocess...", "Loading data from MySQL..."]
+  "cancel_requested": false,
+  "started_at": "2026-04-28T09:44:20Z",
+  "current_epoch": 3,
+  "total_epochs": 30,
+  "current_phase": "training",
+  "phase_index": 0,
+  "total_phases": 0,
+  "train_loss": 0.1284,
+  "val_loss": 0.4857,
+  "best_val_loss": 0.4857,
+  "metrics": {},
+  "log_lines": [
+    "Train: 1947681, Val: 63633, Test: 63633",
+    "Epoch 1/30 — Train: 0.1342, Val: 0.4870",
+    "Epoch 2/30 — Train: 0.1301, Val: 0.4861",
+    "Epoch 3/30 — Train: 0.1284, Val: 0.4857"
+  ]
 }
 ```
 

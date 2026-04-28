@@ -300,6 +300,12 @@ class ModelRegistry:
         }
 
     def get_version_dir(self, model_name: str, version_id: str) -> Optional[str]:
-        """Get the filesystem path for a specific model version."""
+        """Get the filesystem path for a specific model version if it exists."""
         vdir = os.path.join(self._version_dir, model_name, version_id)
         return vdir if os.path.exists(vdir) else None
+
+    def ensure_version_dir(self, model_name: str, version_id: str) -> str:
+        """Create and return a writable version directory for a model."""
+        vdir = os.path.join(self._version_dir, model_name, version_id)
+        os.makedirs(vdir, exist_ok=True)
+        return vdir

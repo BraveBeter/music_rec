@@ -108,7 +108,12 @@
             <tbody>
               <tr v-for="(v, vid) in modelInfo.versions" :key="String(vid)" class="clickable-row">
                 <td class="version-id-cell">{{ vid }}</td>
-                <td><StatusBadge :status="versionStatusMap[v.status] || v.status" /></td>
+                <td>
+                  <StatusBadge
+                    :status="versionStatusMap[v.status]?.status || 'idle'"
+                    :label="versionStatusMap[v.status]?.label || v.status"
+                  />
+                </td>
                 <td>{{ formatTime(v.saved_at) }}</td>
                 <td>
                   <span v-if="v.metrics?.['ndcg@10'] !== undefined" class="metric-val">
@@ -194,11 +199,11 @@ const modelLabels: Record<string, string> = {
   multi_recall_funnel: 'Multi-recall Funnel',
 }
 
-const versionStatusMap: Record<string, string> = {
-  active: 'completed',
-  superseded: 'idle',
-  rejected: 'error',
-  pending: 'running',
+const versionStatusMap: Record<string, { status: 'running' | 'completed' | 'error' | 'idle' | 'disabled' | 'cancelled' | 'interrupted', label?: string }> = {
+  active: { status: 'completed', label: '当前生产' },
+  superseded: { status: 'idle', label: '已淘汰' },
+  rejected: { status: 'idle', label: '已拒绝' },
+  pending: { status: 'running', label: '待晋升' },
 }
 
 const metricColumns = [

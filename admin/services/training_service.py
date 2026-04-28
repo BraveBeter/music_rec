@@ -181,6 +181,7 @@ async def cancel_training(task_id: str) -> dict:
         # Check if it's still marked as running in the progress file
         progress = ProgressTracker.read_progress(task_id)
         if progress and progress.get("status") == "running":
+            progress["cancel_requested"] = True
             progress["status"] = "cancelled"
             progress["error"] = "Cancelled by admin"
             progress["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -188,6 +189,7 @@ async def cancel_training(task_id: str) -> dict:
             return {"status": "cancelled", "task_id": task_id}
         return {"status": "not_found", "task_id": task_id}
 
+    ProgressTracker.request_cancel(task_id, "Cancelled by admin")
     proc.terminate()
     try:
         await asyncio.wait_for(proc.wait(), timeout=5.0)
@@ -198,6 +200,7 @@ async def cancel_training(task_id: str) -> dict:
 
     progress = ProgressTracker.read_progress(task_id)
     if progress:
+        progress["cancel_requested"] = True
         progress["status"] = "cancelled"
         progress["error"] = "Cancelled by admin"
         progress["completed_at"] = datetime.now(timezone.utc).isoformat()

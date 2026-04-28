@@ -22,6 +22,23 @@ _sasrec = None
 _track_genre_map = None
 _genre_tracks_map = None
 
+SOURCE_ORDER = {
+    "itemcf": 0,
+    "sasrec": 1,
+    "tag": 2,
+    "popularity": 3,
+}
+
+RRF_K = 30
+ITEMCF_ANCHOR_BIAS = 0.20
+ITEMCF_RRF_WEIGHT = 0.50
+SASREC_OVERLAP_WEIGHT = 0.05
+SASREC_EXPLORE_WEIGHT = 0.01
+TAG_EXPLORE_WEIGHT = 0.01
+POPULARITY_EXPLORE_WEIGHT = 0.005
+SASREC_CONFIDENCE_THRESHOLD = 0.20
+PRIMARY_CANDIDATE_FLOOR = 80
+
 
 def _get_item_cf():
     """Lazy-load ItemCF model."""
@@ -61,6 +78,53 @@ def _normalize_scores(results: list[tuple[str, float]]) -> list[tuple[str, float
     if rng < 1e-8:
         return [(tid, 1.0) for tid, _ in results]
     return [(tid, (s - mn) / rng) for tid, s in results]
+
+
+def _rrf_score(rank: int, k: int = RRF_K) -> float:
+    """Reciprocal rank fusion score."""
+    return 1.0 / (k + rank + 1)
+
+
+def _merge_ranked_candidates(
+    candidates: dict[str, float],
+    sources: dict[str, set[str]],
+    results: list[tuple[str, float]],
+    source_name: str,
+    weight: float,
+    *,
+    anchor_bias: float = 0.0,
+    allow_new: bool = True,
+    max_new: int | None = None,
+    seen_items: set[str] | None = None,
+):
+    """Merge a ranked list into fused candidates using conservative rank-based scoring."""
+    added_new = 0
+    for rank, (track_id, _) in enumerate(results):
+        if seen_items and track_id in seen_items:
+            continue
+
+        delta = weight * _rrf_score(rank)
+        if track_id in candidates:
+            candidates[track_id] += delta
+            sources[track_id].add(source_name)
+            continue
+
+        if not allow_new:
+            continue
+        if max_new is not None and added_new >= max_new:
+            break
+
+        candidates[track_id] = anchor_bias + delta
+        sources[track_id] = {source_name}
+        added_new += 1
+
+
+def _format_source_label(source_names: set[str]) -> str:
+    """Render merged source labels in stable priority order."""
+    if not source_names:
+        return "unknown"
+    ordered = sorted(source_names, key=lambda name: SOURCE_ORDER.get(name, 99))
+    return "+".join(ordered)
 
 
 def _load_track_genre_map() -> dict[str, list[str]]:
@@ -278,69 +342,108 @@ def multi_recall(
     Returns:
         list of (track_id, score, source) tuples, deduplicated and sorted
     """
-    candidates: dict[str, tuple[float, str]] = {}
+    candidates: dict[str, float] = {}
+    candidate_sources: dict[str, set[str]] = {}
+    seen_items = set(user_sequence or [])
 
-    # 1. SASRec recall (with quality gating)
-    sasrec_w = 0.0
+    itemcf_results = itemcf_recall(user_id, top_k=itemcf_k) if user_id is not None else []
+
+    sasrec_results: list[tuple[str, float]] = []
+    sasrec_confidence = 0.0
     if user_sequence and len(user_sequence) >= 3:
-        sasrec_results = _normalize_scores(sasrec_recall(user_sequence, top_k=sasrec_k))
-        confidence = _sasrec_confidence(sasrec_results)
-        # Only trust SASRec if it shows meaningful score differentiation
-        sasrec_w = min(confidence * 2, 1.0)  # scale up, cap at 1.0
-        if sasrec_w < 0.2:
-            logger.debug(f"SASRec confidence too low ({confidence:.2f}), skipping SASRec candidates")
-            sasrec_results = []
-        else:
-            logger.debug(f"SASRec confidence={confidence:.2f}, weight={sasrec_w:.2f}")
-        for track_id, score in sasrec_results:
-            candidates[track_id] = (score * sasrec_w, "sasrec")
-
-    # 2. ItemCF recall (normalized)
-    itemcf_w = 1.0  # ItemCF is the most reliable source
-    if user_id is not None:
-        itemcf_results = _normalize_scores(itemcf_recall(user_id, top_k=itemcf_k))
-        for track_id, score in itemcf_results:
-            weighted = score * itemcf_w
-            if track_id not in candidates:
-                candidates[track_id] = (weighted, "itemcf")
-            else:
-                existing_score = candidates[track_id][0]
-                candidates[track_id] = (existing_score + weighted, "sasrec+itemcf")
-
-    # 2.5 Tag-based recall (genre preference from user sequence)
-    if user_sequence and len(user_sequence) >= 3:
-        tag_results = _normalize_scores(tag_based_recall(user_sequence, top_k=50))
-        tag_w = 0.5
-        for track_id, score in tag_results:
-            weighted = score * tag_w
-            if track_id not in candidates:
-                candidates[track_id] = (weighted, "tag")
-            else:
-                existing_score = candidates[track_id][0]
-                candidates[track_id] = (existing_score + weighted, candidates[track_id][1])
-
-    # 3. Popularity fallback (genre-aware)
-    pop_w = 0.3
-    if popular_tracks:
-        user_liked_ids = {tid for tid in candidates} if candidates else None
-        pop_results = _normalize_scores(
-            genre_weighted_popularity_recall(
-                popular_tracks,
-                user_liked_track_ids=user_liked_ids,
-                top_k=popularity_k,
-                max_per_genre=5,
+        sasrec_results = sasrec_recall(user_sequence, top_k=sasrec_k)
+        sasrec_confidence = _sasrec_confidence(sasrec_results)
+        if sasrec_confidence < SASREC_CONFIDENCE_THRESHOLD:
+            logger.debug(
+                f"SASRec confidence too low ({sasrec_confidence:.2f}), keeping SASRec as fallback only"
             )
-        )
-        for track_id, score in pop_results:
-            if track_id not in candidates:
-                candidates[track_id] = (score * pop_w, "popularity")
+            sasrec_results = []
 
-    # Sort by score descending
-    result = [(tid, info[0], info[1]) for tid, info in candidates.items()]
+    if itemcf_results:
+        # Warm users: keep ItemCF as the anchor, and only use SASRec as a light consensus signal.
+        _merge_ranked_candidates(
+            candidates,
+            candidate_sources,
+            itemcf_results,
+            "itemcf",
+            ITEMCF_RRF_WEIGHT,
+            anchor_bias=ITEMCF_ANCHOR_BIAS,
+            seen_items=seen_items,
+        )
+
+        if sasrec_results:
+            _merge_ranked_candidates(
+                candidates,
+                candidate_sources,
+                sasrec_results,
+                "sasrec",
+                SASREC_OVERLAP_WEIGHT,
+                allow_new=len(itemcf_results) < PRIMARY_CANDIDATE_FLOOR,
+                max_new=max(0, PRIMARY_CANDIDATE_FLOOR - len(itemcf_results)),
+                seen_items=seen_items,
+            )
+
+        if user_sequence and len(user_sequence) >= 3 and len(candidates) < PRIMARY_CANDIDATE_FLOOR:
+            tag_results = tag_based_recall(user_sequence, top_k=50)
+            _merge_ranked_candidates(
+                candidates,
+                candidate_sources,
+                tag_results,
+                "tag",
+                TAG_EXPLORE_WEIGHT,
+                max_new=max(0, PRIMARY_CANDIDATE_FLOOR - len(candidates)),
+                seen_items=seen_items,
+            )
+    else:
+        # Sparse / sequence-only users: fall back to sequential + content/popularity recall.
+        if sasrec_results:
+            _merge_ranked_candidates(
+                candidates,
+                candidate_sources,
+                sasrec_results,
+                "sasrec",
+                0.60,
+                anchor_bias=0.10,
+                seen_items=seen_items,
+            )
+
+        if user_sequence and len(user_sequence) >= 3:
+            tag_results = tag_based_recall(user_sequence, top_k=50)
+            _merge_ranked_candidates(
+                candidates,
+                candidate_sources,
+                tag_results,
+                "tag",
+                0.15,
+                seen_items=seen_items,
+            )
+
+    if popular_tracks and len(candidates) < max(popularity_k, PRIMARY_CANDIDATE_FLOOR):
+        user_liked_ids = set(user_sequence or [])
+        pop_results = genre_weighted_popularity_recall(
+            popular_tracks,
+            user_liked_track_ids=user_liked_ids if user_liked_ids else None,
+            top_k=popularity_k,
+            max_per_genre=5,
+        )
+        _merge_ranked_candidates(
+            candidates,
+            candidate_sources,
+            pop_results,
+            "popularity",
+            POPULARITY_EXPLORE_WEIGHT if itemcf_results else 0.08,
+            max_new=max(0, max(popularity_k, PRIMARY_CANDIDATE_FLOOR) - len(candidates)),
+            seen_items=seen_items,
+        )
+
+    result = [
+        (track_id, score, _format_source_label(candidate_sources.get(track_id, set())))
+        for track_id, score in candidates.items()
+    ]
     result.sort(key=lambda x: x[1], reverse=True)
 
     logger.debug(f"Multi-recall: {len(result)} candidates "
                  f"(user_id={user_id}, seq_len={len(user_sequence) if user_sequence else 0}, "
-                 f"sasrec_w={sasrec_w:.2f})")
+                 f"sasrec_conf={sasrec_confidence:.2f}, itemcf={len(itemcf_results)})")
 
     return result

@@ -36,141 +36,137 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="favorites-page">
-    <header class="page-header animate-fade-in">
-      <h1 class="page-title gradient-text">❤️ 我的收藏</h1>
+  <div class="favorites-page page-shell">
+    <header class="page-hero animate-fade-in">
+      <div class="page-hero-copy">
+        <span class="page-kicker">Your Library</span>
+        <h1 class="page-title">我的收藏</h1>
+        <p class="page-subtitle">集中查看已保存的歌曲和歌手，视觉更统一，但数据和操作逻辑不变。</p>
+      </div>
+
+      <div class="page-actions">
+        <span class="pill-tag">{{ trackFavorites.length }} Tracks</span>
+        <span class="pill-tag">{{ artistFavorites.length }} Artists</span>
+      </div>
     </header>
 
-    <!-- Tabs -->
-    <div class="tabs">
-      <button
-        :class="['tab-btn', { active: activeTab === 'tracks' }]"
-        @click="activeTab = 'tracks'"
-      >
-        歌曲 ({{ trackFavorites.length }})
-      </button>
-      <button
-        :class="['tab-btn', { active: activeTab === 'artists' }]"
-        @click="activeTab = 'artists'"
-      >
-        歌手 ({{ artistFavorites.length }})
-      </button>
-    </div>
+    <section class="section-block animate-slide-up">
+      <div class="tab-bar">
+        <button
+          :class="['tab-btn', { active: activeTab === 'tracks' }]"
+          @click="activeTab = 'tracks'"
+        >
+          歌曲
+          <span class="tab-count">{{ trackFavorites.length }}</span>
+        </button>
+        <button
+          :class="['tab-btn', { active: activeTab === 'artists' }]"
+          @click="activeTab = 'artists'"
+        >
+          歌手
+          <span class="tab-count">{{ artistFavorites.length }}</span>
+        </button>
+      </div>
 
-    <div v-if="loading" class="loading-state">
-      <div v-for="i in 5" :key="i" class="skeleton" style="width: 100%; height: 56px; margin-bottom: 4px;"></div>
-    </div>
+      <div v-if="loading" class="row-list">
+        <div v-for="i in 5" :key="i" class="skeleton skeleton-row"></div>
+      </div>
 
-    <!-- Track favorites tab -->
-    <template v-else-if="activeTab === 'tracks'">
-      <div v-if="trackFavorites.length" class="track-list">
-        <TrackCard
-          v-for="track in trackFavorites"
-          :key="track.track_id"
-          :track="track"
-          :tracks="trackFavorites"
-        />
-      </div>
-      <div v-else class="empty-state">
-        <p>还没有收藏任何歌曲</p>
-        <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
-      </div>
-    </template>
+      <template v-else-if="activeTab === 'tracks'">
+        <div v-if="trackFavorites.length" class="row-list">
+          <TrackCard
+            v-for="track in trackFavorites"
+            :key="track.track_id"
+            :track="track"
+            :tracks="trackFavorites"
+          />
+        </div>
+        <div v-else class="empty-state">
+          <p>还没有收藏任何歌曲。</p>
+          <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
+        </div>
+      </template>
 
-    <!-- Artist favorites tab -->
-    <template v-else>
-      <div v-if="artistFavorites.length" class="artist-list">
-        <ArtistCard
-          v-for="artist in artistFavorites"
-          :key="artist.artist_name"
-          :artist="artist"
-          :show-favorite="true"
-        />
-      </div>
-      <div v-else class="empty-state">
-        <p>还没有收藏任何歌手</p>
-        <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
-      </div>
-    </template>
+      <template v-else>
+        <div v-if="artistFavorites.length" class="artist-grid">
+          <ArtistCard
+            v-for="artist in artistFavorites"
+            :key="artist.artist_name"
+            :artist="artist"
+            :show-favorite="true"
+          />
+        </div>
+        <div v-else class="empty-state">
+          <p>还没有收藏任何歌手。</p>
+          <router-link to="/discover" class="btn-primary">去发现音乐</router-link>
+        </div>
+      </template>
+    </section>
   </div>
 </template>
 
 <style scoped>
-.favorites-page {
-  max-width: 900px;
-  margin: 0 auto;
-}
-
-.page-header {
-  margin-bottom: var(--spacing-lg);
-}
-
-.page-title {
-  font-size: var(--font-size-3xl);
-  font-weight: 700;
-  margin-bottom: var(--spacing-xs);
-}
-
-.tabs {
-  display: flex;
-  gap: var(--spacing-sm);
-  margin-bottom: var(--spacing-xl);
-  border-bottom: 1px solid var(--color-border);
-  padding-bottom: var(--spacing-sm);
+.tab-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: var(--shadow-medium);
+  margin-bottom: 1rem;
 }
 
 .tab-btn {
-  padding: var(--spacing-sm) var(--spacing-lg);
-  border: none;
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 40px;
+  padding: 0 1rem;
+  border-radius: 999px;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: var(--radius-md) var(--radius-md) 0 0;
-  transition: all var(--transition-fast);
-  position: relative;
-}
-
-.tab-btn:hover {
-  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .tab-btn.active {
-  color: var(--color-accent-primary);
+  background: var(--color-bg-surface-strong);
+  color: var(--color-text-base);
 }
 
-.tab-btn.active::after {
-  content: '';
-  position: absolute;
-  bottom: -5px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--color-accent-primary);
-  border-radius: 2px;
+.tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: var(--font-size-badge);
+  font-weight: 700;
+  letter-spacing: normal;
 }
 
-.track-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.artist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.875rem;
 }
 
-.artist-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.skeleton-row {
+  width: 100%;
+  height: 78px;
 }
 
-.empty-state {
-  text-align: center;
-  padding: var(--spacing-2xl);
-  color: var(--color-text-muted);
-}
-
-.empty-state p {
-  margin-bottom: var(--spacing-lg);
-  font-size: var(--font-size-lg);
+@media (max-width: 768px) {
+  .artist-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

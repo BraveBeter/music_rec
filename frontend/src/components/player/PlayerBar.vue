@@ -27,79 +27,99 @@ async function toggleLike() {
   if (nowLiked) {
     interactionsApi.log({
       track_id: player.currentTrack.track_id,
-      interaction_type: 2, // like
+      interaction_type: 2,
     }).catch(() => {})
   }
 }
 
-const trackTitle = computed(() => player.currentTrack?.title || '♪ MusicRec')
+const trackTitle = computed(() => player.currentTrack?.title || 'MusicRec')
 const artistName = computed(() => player.currentTrack?.artist_name || '')
 const coverUrl = computed(() =>
-  player.currentTrack?.cover_url || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%231a1a2e" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%236366f1" font-size="40">♪</text></svg>'
+  player.currentTrack?.cover_url || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23121212" width="100" height="100"/><text x="50" y="56" text-anchor="middle" fill="%231ed760" font-size="38">♪</text></svg>'
 )
-const isLiked = computed(() => player.currentTrack ? favStore.isFavorited(player.currentTrack.track_id) : false)
+const isLiked = computed(() => (player.currentTrack ? favStore.isFavorited(player.currentTrack.track_id) : false))
 </script>
 
 <template>
-  <div class="player-bar glass" :class="{ idle: !player.currentTrack }">
-    <!-- Progress Bar -->
-    <div class="progress-wrapper" @click="handleProgressClick">
-      <div class="progress-track">
-        <div class="progress-fill" :style="{ width: player.progress + '%' }"></div>
-      </div>
-    </div>
+  <div class="player-bar" :class="{ idle: !player.currentTrack }">
+    <button
+      type="button"
+      class="progress-hitbox"
+      :disabled="!player.currentTrack"
+      aria-label="调整播放进度"
+      @click="handleProgressClick"
+    >
+      <span class="progress-track">
+        <span class="progress-fill" :style="{ width: player.progress + '%' }"></span>
+      </span>
+    </button>
 
-    <div class="player-content">
-      <!-- Track Info -->
-      <div class="track-info">
+    <div class="player-shell">
+      <div class="player-now">
         <div class="track-cover">
           <img :src="coverUrl" :alt="trackTitle" />
-          <div v-if="player.isPlaying" class="playing-indicator">
-            <span></span><span></span><span></span>
-          </div>
+          <div v-if="player.isPlaying" class="cover-pulse" aria-hidden="true"></div>
         </div>
-        <div class="track-meta">
-          <div class="track-title">{{ trackTitle }}</div>
+
+        <div class="track-copy">
+          <span class="track-status">{{ player.currentTrack ? 'Now Playing' : 'Standby' }}</span>
+          <strong class="track-title">{{ trackTitle }}</strong>
           <router-link
             v-if="player.currentTrack && artistName"
             :to="`/artist/${encodeURIComponent(artistName)}`"
             class="track-artist"
-          >{{ artistName }}</router-link>
-          <div v-else class="track-artist">{{ player.currentTrack ? artistName : '点击任意歌曲开始播放' }}</div>
+          >
+            {{ artistName }}
+          </router-link>
+          <span v-else class="track-artist">点击任意歌曲开始播放</span>
         </div>
       </div>
 
-      <!-- Controls -->
-      <div class="player-controls">
-        <button class="btn-icon" @click="player.prev()" :disabled="!player.currentTrack" title="上一首">⏮</button>
-        <button class="play-btn" @click="player.togglePlay()" :disabled="!player.currentTrack" :title="player.isPlaying ? '暂停' : '播放'">
-          {{ player.isPlaying ? '⏸' : '▶' }}
-        </button>
-        <button class="btn-icon" @click="player.next()" :disabled="!player.currentTrack" title="下一首">⏭</button>
-        <button
-          v-if="auth.isLoggedIn"
-          :class="['like-btn', { liked: isLiked }]"
-          @click="toggleLike"
-          :disabled="!player.currentTrack"
-          :title="isLiked ? '取消收藏' : '收藏'"
-        >{{ isLiked ? '❤️' : '🤍' }}</button>
+      <div class="player-transport">
+        <div class="transport-row">
+          <button class="btn-icon transport-btn" :disabled="!player.currentTrack" title="上一首" @click="player.prev()">
+            ⏮
+          </button>
+          <button
+            class="play-btn"
+            :disabled="!player.currentTrack"
+            :title="player.isPlaying ? '暂停' : '播放'"
+            @click="player.togglePlay()"
+          >
+            {{ player.isPlaying ? '⏸' : '▶' }}
+          </button>
+          <button class="btn-icon transport-btn" :disabled="!player.currentTrack" title="下一首" @click="player.next()">
+            ⏭
+          </button>
+          <button
+            v-if="auth.isLoggedIn"
+            :class="['btn-icon transport-btn', 'like-btn', { liked: isLiked }]"
+            :disabled="!player.currentTrack"
+            :title="isLiked ? '取消收藏' : '收藏'"
+            @click="toggleLike"
+          >
+            {{ isLiked ? '♥' : '♡' }}
+          </button>
+        </div>
       </div>
 
-      <!-- Time & Volume -->
       <div class="player-extra">
-        <span class="time-display" v-if="player.currentTrack">
-          {{ player.formattedCurrentTime }} / {{ player.formattedDuration }}
-        </span>
+        <div class="player-timing" v-if="player.currentTrack">
+          <span>{{ player.formattedCurrentTime }}</span>
+          <span class="timing-separator">/</span>
+          <span>{{ player.formattedDuration }}</span>
+        </div>
+
         <div class="volume-control">
-          <span class="volume-icon">🔊</span>
+          <span class="volume-label">VOL</span>
           <input
             type="range"
             min="0"
             max="1"
             step="0.01"
             :value="player.volume"
-            @input="handleVolumeChange"
             class="volume-slider"
+            @input="handleVolumeChange"
           />
         </div>
       </div>
@@ -110,86 +130,66 @@ const isLiked = computed(() => player.currentTrack ? favStore.isFavorited(player
 <style scoped>
 .player-bar {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  inset: auto 0 0;
+  z-index: 220;
   height: var(--player-height);
-  z-index: 200;
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--color-border);
-  transition: opacity var(--transition-base);
+  padding: 0.35rem 1rem 0.75rem;
+  background:
+    linear-gradient(180deg, rgba(18, 18, 18, 0.92), rgba(10, 10, 10, 0.98));
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: var(--shadow-heavy);
 }
 
-/* Idle state - no track loaded */
-.player-bar.idle .track-cover img {
-  opacity: 0.35;
-  filter: grayscale(1);
-}
-.player-bar.idle .track-title {
-  color: var(--color-text-muted);
-}
-.player-bar.idle .play-btn,
-.player-bar.idle .btn-icon,
-.player-bar.idle .like-btn {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
-button:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-
-.progress-wrapper {
-  height: 4px;
-  cursor: pointer;
-  position: relative;
-}
-
-.progress-wrapper:hover {
-  height: 6px;
+.progress-hitbox {
+  width: 100%;
+  padding: 0.1rem 0 0.45rem;
+  border-radius: 0;
+  background: transparent;
 }
 
 .progress-track {
+  display: block;
   width: 100%;
-  height: 100%;
-  background: rgba(255, 255, 255, 0.1);
-  position: relative;
+  height: 4px;
+  border-radius: var(--radius-pill-full);
+  background: rgba(255, 255, 255, 0.14);
+  overflow: hidden;
+}
+
+.progress-hitbox:hover .progress-track {
+  height: 6px;
 }
 
 .progress-fill {
+  display: block;
   height: 100%;
-  background: var(--color-accent-gradient);
-  border-radius: 0 2px 2px 0;
-  transition: width 0.1s linear;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width 90ms linear;
 }
 
-.player-content {
-  flex: 1;
-  display: flex;
+.player-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) auto minmax(0, 1fr);
   align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--spacing-xl);
-  gap: var(--spacing-xl);
+  gap: 1rem;
+  height: calc(100% - 0.55rem);
 }
 
-.track-info {
+.player-now {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
-  min-width: 200px;
-  flex: 1;
+  gap: 0.875rem;
+  min-width: 0;
 }
 
 .track-cover {
+  position: relative;
   width: 56px;
   height: 56px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  position: relative;
+  background: var(--color-bg-surface-strong);
   flex-shrink: 0;
 }
 
@@ -199,163 +199,201 @@ button:disabled {
   object-fit: cover;
 }
 
-.playing-indicator {
+.cover-pulse {
   position: absolute;
-  bottom: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 2px;
-  align-items: flex-end;
-  height: 14px;
+  inset: auto 8px 8px;
+  height: 6px;
+  border-radius: var(--radius-pill-full);
+  background: var(--color-accent);
+  box-shadow: 0 0 12px rgba(30, 215, 96, 0.4);
 }
 
-.playing-indicator span {
-  width: 3px;
-  background: var(--color-accent-primary);
-  border-radius: 1px;
-  animation: equalize 0.8s infinite;
-}
-
-.playing-indicator span:nth-child(1) { height: 60%; animation-delay: 0s; }
-.playing-indicator span:nth-child(2) { height: 100%; animation-delay: 0.2s; }
-.playing-indicator span:nth-child(3) { height: 40%; animation-delay: 0.4s; }
-
-@keyframes equalize {
-  0%, 100% { height: 40%; }
-  50% { height: 100%; }
-}
-
-.track-meta {
+.track-copy {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.track-status {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-badge);
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
 }
 
 .track-title {
+  color: var(--color-text-base);
   font-size: var(--font-size-sm);
-  font-weight: 600;
+  font-weight: 700;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .track-artist {
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-decoration: none;
-  transition: color var(--transition-fast);
 }
 
 .track-artist:hover {
-  color: var(--color-accent-primary);
+  color: var(--color-text-base);
 }
 
-.player-controls {
+.player-transport {
+  display: flex;
+  justify-content: center;
+}
+
+.transport-row {
   display: flex;
   align-items: center;
-  gap: var(--spacing-md);
+  gap: 0.75rem;
+}
+
+.transport-btn {
+  font-size: 0.95rem;
 }
 
 .play-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent-gradient);
-  color: white;
-  font-size: 1.2rem;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--transition-fast);
-  border: none;
-  cursor: pointer;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: #000000;
+  font-size: 1.05rem;
+  box-shadow: var(--shadow-medium);
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast);
 }
 
-.play-btn:hover {
-  transform: scale(1.05);
-  box-shadow: var(--shadow-glow);
-}
-
-.like-btn {
-  background: transparent;
-  border: none;
-  font-size: 1.1rem;
-  cursor: pointer;
-  padding: 0;
-  width: 32px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-full);
-  transition: all var(--transition-fast);
-  opacity: 0.7;
-}
-
-.like-btn:hover {
-  opacity: 1;
-  transform: scale(1.1);
+.play-btn:hover:not(:disabled) {
+  transform: scale(1.04);
+  background: #3be477;
 }
 
 .like-btn.liked {
-  opacity: 1;
+  color: var(--color-accent);
 }
 
 .player-extra {
   display: flex;
   align-items: center;
-  gap: var(--spacing-lg);
-  min-width: 200px;
   justify-content: flex-end;
-  flex: 1;
+  gap: 1rem;
+  min-width: 0;
 }
 
-.time-display {
+.player-timing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 
-.volume-control {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
+.timing-separator {
+  color: var(--color-text-muted);
 }
 
-.volume-icon {
-  font-size: 0.9rem;
+.volume-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.volume-label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-badge);
+  font-weight: 700;
+  letter-spacing: 0.18em;
 }
 
 .volume-slider {
-  width: 80px;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 2px;
-  outline: none;
-  border: none;
+  width: 96px;
   padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.volume-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-pill-full);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
+  appearance: none;
   width: 12px;
   height: 12px;
+  margin-top: -4px;
   border-radius: 50%;
-  background: var(--color-accent-primary);
-  cursor: pointer;
+  background: var(--color-accent);
 }
 
-@media (max-width: 768px) {
+.volume-slider::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-pill-full);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+
+.player-bar.idle .track-cover img,
+.player-bar.idle .play-btn,
+.player-bar.idle .transport-btn {
+  opacity: 0.45;
+}
+
+@media (max-width: 1024px) {
+  .player-shell {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .player-extra {
     display: none;
   }
+}
 
-  .track-info {
-    min-width: 120px;
+@media (max-width: 768px) {
+  .player-bar {
+    height: 88px;
+    padding: 0.35rem 0.75rem 0.6rem;
+  }
+
+  .player-shell {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.75rem;
+  }
+
+  .track-cover {
+    width: 48px;
+    height: 48px;
+  }
+
+  .transport-row {
+    gap: 0.5rem;
+  }
+
+  .play-btn {
+    width: 44px;
+    height: 44px;
   }
 }
 </style>

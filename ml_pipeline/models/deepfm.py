@@ -7,6 +7,7 @@ import os
 import sys
 import logging
 import json
+from typing import Callable
 
 import numpy as np
 import pandas as pd
@@ -180,6 +181,7 @@ class DeepFMRecommender:
         batch_size: int = BATCH_SIZE,
         lr: float = LEARNING_RATE,
         patience: int = 5,
+        epoch_callback: Callable[[int, float, float | None], bool | None] | None = None,
     ) -> dict:
         """Train the DeepFM model."""
         self.sparse_features = feature_meta["sparse_features"]
@@ -217,6 +219,7 @@ class DeepFMRecommender:
         best_state = None
         no_improve_count = 0
         history = {"train_loss": [], "val_loss": []}
+        stopped_by_callback = False
 
         for epoch in range(epochs):
             # Train
@@ -237,6 +240,7 @@ class DeepFMRecommender:
 
             # Validate
             val_loss_str = "N/A"
+            avg_val = None
             if val_loader:
                 self.model.eval()
                 val_total = 0.0
@@ -263,6 +267,13 @@ class DeepFMRecommender:
             if (epoch + 1) % 5 == 0 or epoch == 0:
                 logger.info(f"Epoch {epoch + 1}/{epochs}, Train: {avg_train:.4f}, Val: {val_loss_str}")
 
+            if epoch_callback:
+                should_continue = epoch_callback(epoch + 1, avg_train, avg_val)
+                if should_continue is False:
+                    logger.info(f"DeepFM training stopped by callback at epoch {epoch + 1}")
+                    stopped_by_callback = True
+                    break
+
             if no_improve_count >= patience:
                 logger.info(f"Early stopping at epoch {epoch + 1}")
                 break
@@ -270,6 +281,8 @@ class DeepFMRecommender:
         if best_state:
             self.model.load_state_dict(best_state)
 
+        if stopped_by_callback:
+            logger.info("DeepFM training interrupted before normal completion")
         logger.info(f"DeepFM training complete. Best val loss: {best_val_loss:.4f}")
         return history
 

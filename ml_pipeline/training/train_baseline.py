@@ -29,9 +29,23 @@ def _get_task_id() -> str | None:
     return None
 
 
+def _abort_if_cancelled(tracker, stage: str) -> bool:
+    """Stop gracefully when admin requested cancellation."""
+    if tracker and tracker.should_stop():
+        logger.info(f"Cancellation detected during {stage}; skipping remaining steps")
+        tracker.append_log(f"Cancellation detected during {stage}; skipped remaining phases.")
+        tracker.__exit__(None, None, None)
+        return True
+    return False
+
+
 def main():
     task_id = _get_task_id()
     tracker = None
+    version_id = task_id or f"train_baseline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from ml_pipeline.models.versioning import ModelRegistry
+    registry = ModelRegistry()
+    version_dir = registry.ensure_version_dir("item_cf", version_id)
 
     logger.info("=" * 60)
     logger.info("Training Baseline Models: ItemCF + SVD")
@@ -73,7 +87,9 @@ def main():
 
     item_cf = ItemCF(top_k_similar=50)
     item_cf.fit(train, user2idx, track2idx)
-    item_cf.save()
+    if _abort_if_cancelled(tracker, "itemcf training"):
+        return
+    item_cf.save(path=version_dir)
 
     logger.info("Evaluating ItemCF...")
     item_cf_result = evaluate_model(
@@ -83,14 +99,12 @@ def main():
         all_interactions=all_interactions,
         num_items=num_items,
     )
+    if _abort_if_cancelled(tracker, "itemcf evaluation"):
+        return
     results.append(item_cf_result)
     logger.info(f"ItemCF results: {item_cf_result}")
 
     # Version management: save version + compare + promote
-    version_id = task_id or f"train_baseline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    from ml_pipeline.models.versioning import ModelRegistry
-    registry = ModelRegistry()
-    registry.save_version_artifacts("item_cf", version_id)
     registry.register_version("item_cf", version_id, item_cf_result)
     promoted = registry.compare_and_promote("item_cf", version_id, item_cf_result)
     if promoted:
@@ -124,6 +138,8 @@ def main():
         batch_size=256,
         lr=1e-3,
     )
+    if _abort_if_cancelled(tracker, "svd training"):
+        return
     svd.save()
 
     if tracker:
@@ -140,6 +156,8 @@ def main():
         all_interactions=all_interactions,
         num_items=num_items,
     )
+    if _abort_if_cancelled(tracker, "svd evaluation"):
+        return
     results.append(svd_result)
     logger.info(f"SVD results: {svd_result}")
 

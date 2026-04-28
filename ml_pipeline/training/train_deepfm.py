@@ -28,9 +28,24 @@ def _get_task_id() -> str | None:
     return None
 
 
+def _abort_if_cancelled(tracker, stage: str) -> bool:
+    """Stop gracefully when admin requested cancellation."""
+    if tracker and tracker.should_stop():
+        logger.info(f"Cancellation detected during {stage}; skipping remaining steps")
+        tracker.append_log(f"Cancellation detected during {stage}; skipped evaluation/versioning.")
+        tracker.__exit__(None, None, None)
+        return True
+    return False
+
+
 def main():
     task_id = _get_task_id()
     tracker = None
+    cancelled = False
+    version_id = task_id or f"train_deepfm_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from ml_pipeline.models.versioning import ModelRegistry
+    registry = ModelRegistry()
+    version_dir = registry.ensure_version_dir("deepfm", version_id)
 
     logger.info("=" * 60)
     logger.info("Training DeepFM Ranking Model")
@@ -56,6 +71,18 @@ def main():
 
     # Train
     deepfm = DeepFMRecommender()
+
+    def _on_epoch(epoch: int, train_loss: float, val_loss: float | None) -> bool:
+        nonlocal cancelled
+        if tracker:
+            tracker.update_epoch(epoch, train_loss=train_loss, val_loss=val_loss)
+            val_str = f"{val_loss:.4f}" if val_loss is not None else "N/A"
+            tracker.append_log(f"Epoch {epoch}/{epochs} — Train: {train_loss:.4f}, Val: {val_str}")
+            if _abort_if_cancelled(tracker, f"epoch {epoch}"):
+                cancelled = True
+                return False
+        return True
+
     history = deepfm.fit(
         train_data=train,
         val_data=val,
@@ -64,28 +91,31 @@ def main():
         batch_size=256,
         lr=1e-3,
         patience=5,
+        epoch_callback=_on_epoch,
     )
 
-    # Track per-epoch progress from history
-    if tracker and history.get("train_loss"):
-        for epoch_idx, (tl, vl) in enumerate(zip(history["train_loss"], history["val_loss"])):
-            tracker.update_epoch(epoch_idx + 1, train_loss=tl, val_loss=vl)
-        tracker.append_log(f"Training done. {len(history['train_loss'])} epochs completed.")
+    if cancelled:
+        return
 
-    # Save model
-    deepfm.save()
+    # Training summary log
+    if tracker and history.get("train_loss"):
+        tracker.append_log(f"Training done. {len(history['train_loss'])} epochs completed.")
+    if _abort_if_cancelled(tracker, "post-training"):
+        return
+
+    # Save to version dir first; production promotion happens only after evaluation passes.
+    deepfm.save(path=version_dir)
 
     # Save ID mappings alongside model so evaluation uses training-time indices
     import shutil
-    model_dir = os.path.join(MODEL_DIR, "deepfm")
     for mapping_file in ["user2idx.parquet", "track2idx.parquet"]:
         src = os.path.join(PROCESSED_DATA_DIR, mapping_file)
         if os.path.exists(src):
-            shutil.copy2(src, os.path.join(model_dir, mapping_file))
+            shutil.copy2(src, os.path.join(version_dir, mapping_file))
 
     # Export ONNX
     try:
-        deepfm.export_onnx()
+        deepfm.export_onnx(path=version_dir)
         logger.info("ONNX export successful")
     except Exception as e:
         logger.warning(f"ONNX export failed: {e}")
@@ -192,14 +222,12 @@ def main():
             tracker.append_log(f"DeepFM rec eval: NDCG@10={deepfm_eval_result.get('ndcg@10', 0):.4f}")
     except Exception as e:
         logger.warning(f"DeepFM recommendation evaluation failed: {e}")
+    if _abort_if_cancelled(tracker, "evaluation"):
+        return
 
     # Version management: save version + compare + promote
-    version_id = task_id or f"train_deepfm_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    from ml_pipeline.models.versioning import ModelRegistry
-    registry = ModelRegistry()
     # Use recommendation metrics for comparison, fall back to classification metrics
     comparison_metrics = deepfm_eval_result if deepfm_eval_result else results
-    registry.save_version_artifacts("deepfm", version_id)
     registry.register_version("deepfm", version_id, comparison_metrics)
     promoted = registry.compare_and_promote("deepfm", version_id, comparison_metrics)
     if promoted:

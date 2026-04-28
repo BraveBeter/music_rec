@@ -2,7 +2,7 @@
 
 ## 8.1 版本管理概览
 
-模型版本管理系统提供了模型训练的版本控制、自动评测对比和自动提升机制。每次训练都会保存版本化副本，通过 NDCG@10 指标对比决定是否提升到生产环境。
+模型版本管理系统提供了模型训练的版本控制、自动评测对比和自动提升机制。每次训练都会先写入独立版本目录，再通过 NDCG@10 指标对比决定是否提升到生产环境。
 
 ### 设计目标
 
@@ -120,28 +120,29 @@ data/
     例如: "20250421_123456"
     │
     ▼
-[3] 训练模型，保存到 data/models/{model}/
-    model.save() → data/models/item_cf/...
+[3] 训练模型，保存到 data/model_versions/{model}/{version_id}/
+    model.save(path=version_dir)
     │
     ▼
-[4] 保存版本化副本到 data/model_versions/{model}/{version_id}/
-    registry.save_version_artifacts(model_name, version_id)
+[4] 若训练被取消
+    └── 直接结束任务
+    └── 不评测、不注册版本、不更新生产目录
     │
     ▼
-[5] 注册版本到注册表（状态=pending）
-    registry.register_version(model_name, version_id, {})
-    │
-    ▼
-[6] 评测模型
+[5] 评测模型
     evaluation_metrics = evaluate(model)
     例如: {"ndcg@10": 0.0842, "precision@10": 0.0125}
+    │
+    ▼
+[6] 注册版本到注册表（状态=pending）
+    registry.register_version(model_name, version_id, {})
     │
     ▼
 [7] 对比并自动提升
     promoted = registry.compare_and_promote(model_name, version_id, evaluation_metrics)
     │
     ├── 新版本 NDCG@10 > 旧版本 → 提升（status=active）
-    │    └── 复制文件到 data/models/{model}/
+    │    └── 从版本目录复制到 data/models/{model}/
     │    └── 更新注册表 active_version
     │
     └── 新版本 NDCG@10 ≤ 旧版本 → 拒绝（status=rejected）
@@ -197,7 +198,8 @@ data/
 |------|------|
 | `load()` | 加载注册表 |
 | `save(data)` | 保存注册表（原子写） |
-| `save_version_artifacts(model, version_id)` | 复制生产模型到版本目录 |
+| `ensure_version_dir(model, version_id)` | 创建并返回版本目录 |
+| `save_version_artifacts(model, version_id)` | 复制生产模型到版本目录（兼容旧流程） |
 | `register_version(model, version_id, metrics)` | 注册新版本 |
 | `compare_and_promote(model, version_id, metrics)` | 对比指标并自动提升 |
 | `promote_version(model, version_id)` | 手动提升指定版本 |
@@ -218,21 +220,19 @@ registry = ModelRegistry()
 # [1] 生成版本 ID
 version_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-# [2] 训练并保存到生产目录
+# [2] 创建版本目录并保存训练产物
+version_dir = registry.ensure_version_dir("item_cf", version_id)
 train_item_cf_model()
-# 模型保存在 data/models/item_cf/
+model.save(path=version_dir)
 
-# [3] 保存版本副本
-registry.save_version_artifacts("item_cf", version_id)
-
-# [4] 注册版本
-registry.register_version("item_cf", version_id, {})
-
-# [5] 评测
+# [3] 评测
 metrics = evaluate_item_cf()
 # {"ndcg@10": 0.0842, "precision@10": 0.0125, ...}
 
-# [6] 自动提升
+# [4] 注册版本
+registry.register_version("item_cf", version_id, metrics)
+
+# [5] 自动提升
 promoted = registry.compare_and_promote("item_cf", version_id, metrics)
 if promoted:
     logger.info("New model promoted to production (NDCG@10 improved)")
@@ -335,4 +335,4 @@ def _get_item_cf():
     # 加载模型...
 ```
 
-版本提升时自动更新此目录，推理代码无需修改。
+版本提升时自动更新此目录，推理代码无需修改。被取消或被拒绝的训练版本只保留在 `data/model_versions/`，不会覆盖生产模型。

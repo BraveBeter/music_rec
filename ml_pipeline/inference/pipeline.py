@@ -49,6 +49,42 @@ def _load_track_genre_map() -> dict[str, list[str]]:
     return _track_genre_map_cache
 
 
+def _should_use_deepfm_rerank(
+    recall_results: list[tuple[str, float, str]],
+    top_k: int,
+) -> bool:
+    """
+    Skip DeepFM when the candidate list is already strongly backed by ItemCF.
+    The current DeepFM model underperforms ItemCF offline, so use it only
+    when recall lacks a solid collaborative anchor.
+    """
+    lookahead = recall_results[:max(top_k * 2, 40)]
+    itemcf_backed = sum(1 for _, _, source in lookahead if "itemcf" in source)
+    return itemcf_backed < max(top_k, 10)
+
+
+def _should_apply_mmr(ranked_items: list[tuple[str, float]], top_k: int) -> bool:
+    """Apply diversity rerank only when the head list is genre-dominated."""
+    track_genres = _load_track_genre_map()
+    if not track_genres or len(ranked_items) <= 1:
+        return False
+
+    top_items = ranked_items[:top_k]
+    genre_counts: dict[str, int] = {}
+    labeled_items = 0
+    for track_id, _ in top_items:
+        genres = track_genres.get(track_id, [])
+        if not genres:
+            continue
+        labeled_items += 1
+        primary = genres[0]
+        genre_counts[primary] = genre_counts.get(primary, 0) + 1
+
+    if labeled_items < max(5, len(top_items) // 2):
+        return False
+    return max(genre_counts.values(), default=0) / labeled_items >= 0.60
+
+
 def apply_mmr_rerank(
     ranked_items: list[tuple[str, float]],
     lambda_param: float = 0.7,
@@ -146,10 +182,12 @@ def recommend(
 
     if is_cold_user:
         strategy = "cold_start_popular"
-    elif has_sequence and models.get("sasrec"):
-        strategy = "sasrec_deepfm" if models.get("deepfm") else "sasrec_only"
+    elif models.get("item_cf") and has_sequence and models.get("sasrec"):
+        strategy = "itemcf_sasrec_consensus"
     elif models.get("item_cf"):
-        strategy = "itemcf_deepfm" if models.get("deepfm") else "itemcf_only"
+        strategy = "itemcf_anchor"
+    elif has_sequence and models.get("sasrec"):
+        strategy = "sasrec_only"
     else:
         strategy = "popularity_fallback"
 
@@ -175,7 +213,12 @@ def recommend(
     candidate_ids = [r[0] for r in recall_results]
     recall_scores = {r[0]: r[1] for r in recall_results}
 
-    if models.get("deepfm") and user_id is not None:
+    use_deepfm_rerank = models.get("deepfm") and user_id is not None and _should_use_deepfm_rerank(
+        recall_results,
+        top_k=top_k,
+    )
+
+    if use_deepfm_rerank:
         try:
             ranked = rank_candidates(
                 user_id=user_id,
@@ -184,6 +227,7 @@ def recommend(
                 top_k=top_k,
                 use_onnx=use_onnx and models.get("deepfm_onnx", False),
             )
+            strategy = f"{strategy}_deepfm"
         except Exception as e:
             logger.warning(f"Ranking failed, using recall order: {e}")
             ranked = [(tid, score) for tid, score, _ in recall_results[:top_k]]
@@ -192,11 +236,11 @@ def recommend(
         ranked = [(tid, score) for tid, score, _ in recall_results[:top_k]]
 
     # --- Step 2.5: Diversity re-ranking ---
-    if ranked:
+    if ranked and _should_apply_mmr(ranked, top_k=top_k):
         ranked = apply_mmr_rerank(
             ranked,
-            lambda_param=0.7,
-            max_per_genre=3,
+            lambda_param=0.85,
+            max_per_genre=4,
             top_k=top_k,
         )
 
@@ -211,6 +255,7 @@ def recommend(
             "models_available": models,
             "recall_count": len(recall_results),
             "ranked_count": len(ranked),
+            "used_deepfm_rerank": bool(use_deepfm_rerank),
             "user_seq_len": len(user_sequence) if user_sequence else 0,
         },
     }

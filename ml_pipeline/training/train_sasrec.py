@@ -28,9 +28,23 @@ def _get_task_id() -> str | None:
     return None
 
 
+def _abort_if_cancelled(tracker, stage: str) -> bool:
+    """Stop gracefully when admin requested cancellation."""
+    if tracker and tracker.should_stop():
+        logger.info(f"Cancellation detected during {stage}; skipping remaining steps")
+        tracker.append_log(f"Cancellation detected during {stage}; skipped evaluation/versioning.")
+        tracker.__exit__(None, None, None)
+        return True
+    return False
+
+
 def main():
     task_id = _get_task_id()
     tracker = None
+    version_id = task_id or f"train_sasrec_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    from ml_pipeline.models.versioning import ModelRegistry
+    registry = ModelRegistry()
+    version_dir = registry.ensure_version_dir("sasrec", version_id)
 
     logger.info("=" * 60)
     logger.info("Training SASRec Sequential Model")
@@ -102,7 +116,7 @@ def main():
             seq, pos, neg = seq.to(device), pos.to(device), neg.to(device)
             optimizer.zero_grad()
             seq_output = model(seq)
-            last_hidden = seq_output[:, -1, :]
+            last_hidden = model._get_last_hidden(seq, seq_output)
             pos_emb = model.item_embedding(pos)
             neg_emb = model.item_embedding(neg)
             pos_score = (last_hidden * pos_emb).sum(dim=-1)
@@ -123,7 +137,7 @@ def main():
             for seq, pos, neg in val_loader:
                 seq, pos, neg = seq.to(device), pos.to(device), neg.to(device)
                 seq_output = model(seq)
-                last_hidden = seq_output[:, -1, :]
+                last_hidden = model._get_last_hidden(seq, seq_output)
                 pos_emb = model.item_embedding(pos)
                 neg_emb = model.item_embedding(neg)
                 pos_score = (last_hidden * pos_emb).sum(dim=-1)
@@ -140,6 +154,8 @@ def main():
         if tracker:
             tracker.update_epoch(epoch + 1, train_loss=avg_train, val_loss=avg_val)
             tracker.append_log(f"Epoch {epoch + 1}/{epochs} — Train: {avg_train:.4f}, Val: {avg_val:.4f}")
+            if _abort_if_cancelled(tracker, f"epoch {epoch + 1}"):
+                return
 
         if avg_val < best_val_loss:
             best_val_loss = avg_val
@@ -159,9 +175,11 @@ def main():
 
     sasrec.model = model
     logger.info(f"SASRec training complete. Best val loss: {best_val_loss:.4f}")
+    if _abort_if_cancelled(tracker, "post-training"):
+        return
 
-    # Save
-    sasrec.save()
+    # Save to version dir first; production promotion happens only after evaluation passes.
+    sasrec.save(path=version_dir)
 
     # Evaluate
     logger.info("Evaluating SASRec...")
@@ -183,14 +201,12 @@ def main():
         all_interactions=all_interactions,
         num_items=len(track2idx),
     )
+    if _abort_if_cancelled(tracker, "evaluation"):
+        return
 
     logger.info(f"SASRec results: {sasrec_result}")
 
     # Version management: save version + compare + promote
-    version_id = task_id or f"train_sasrec_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    from ml_pipeline.models.versioning import ModelRegistry
-    registry = ModelRegistry()
-    registry.save_version_artifacts("sasrec", version_id)
     registry.register_version("sasrec", version_id, sasrec_result)
     promoted = registry.compare_and_promote("sasrec", version_id, sasrec_result)
     if promoted:

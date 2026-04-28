@@ -55,5 +55,10 @@ logs/
 # others
 thesis/
 .claude/
-record/
 .playwright-mcp
+
+# Local record notes
+record/
+
+# Local tests are not tracked in this repository
+/tests/

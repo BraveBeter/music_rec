@@ -54,7 +54,7 @@ music_rec/
 │   ├── data_process/                       # [目录] 数据预处理与特征工程
 │   │   ├── __init__.py                     # 空文件
 │   │   ├── preprocess.py                   # [数据] 从 MySQL 加载交互数据 → 清洗 → 隐式标签生成 → 时序切分 → 存为 Parquet
-│   │   ├── feature_engineering.py          # [特征] 构建用户特征(age_bucket/统计量)、物品特征(声学/流行度)、DeepFM数据集、负采样
+│   │   ├── feature_engineering.py          # [特征] 构建用户偏好特征(统计量/歌手/曲风)、物品特征(声学/流行度/歌手/曲风)、DeepFM数据集、hard negative
 │   │   └── generate_synthetic_data.py      # [数据] 生成 60 个合成用户(8种偏好原型)，每人 40-250 条交互行为
 │   ├── models/                             # [目录] 推荐算法模型实现
 │   │   ├── item_cf.py                      # [模型] ItemCF：构建 user-item 稀疏矩阵 → item间余弦相似度 → 推荐相似物品
@@ -63,9 +63,9 @@ music_rec/
 │   │   └── sasrec.py                       # [模型] SASRec：单向 Transformer 建模用户序列，因果注意力预测下一首
 │   ├── inference/                          # [目录] 在线推理管线
 │   │   ├── __init__.py                     # 空文件
-│   │   ├── recall.py                       # [推理] 多路召回：SASRec召回 + ItemCF召回 + Popularity补充，合并去重加权
-│   │   ├── ranking.py                      # [推理] DeepFM 精排：构建稀疏/稠密特征矩阵 → 推理 → 70%DeepFM+30%召回分融合
-│   │   └── pipeline.py                     # [推理] 推荐总入口：检查模型可用 → 选策略 → 调recall → 调ranking → 格式化输出
+│   │   ├── recall.py                       # [推理] 多路召回：ItemCF 锚点 + SASRec 共识 + Tag/Genre-Popularity 轻探索，RRF 风格保守融合
+│   │   ├── ranking.py                      # [推理] 条件 DeepFM 精排：构建扩展特征矩阵 + 元数据先验校准 + 召回分融合
+│   │   └── pipeline.py                     # [推理] 推荐总入口：检查模型可用 → 选策略 → 调recall → 条件调ranking → 条件MMR重排
 │   ├── training/                           # [目录] 模型训练脚本（离线执行）
 │   │   ├── __init__.py                     # 空文件
 │   │   ├── train_baseline.py              # [训练] 训练 ItemCF + SVD，评估并生成 baseline_report.md

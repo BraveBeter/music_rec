@@ -32,10 +32,17 @@ class SASRecDataset(Dataset):
     Item indices are offset by +1 so that 0 is reserved for padding.
     """
 
-    def __init__(self, sequences: dict[str, list[str]], track2idx: dict, max_len: int = MAX_SEQ_LEN):
+    def __init__(
+        self,
+        sequences: dict[str, list[str]],
+        track2idx: dict,
+        max_len: int = MAX_SEQ_LEN,
+        num_negatives: int = 3,
+    ):
         self.max_len = max_len
         self.num_items = len(track2idx)
         self.track2idx = track2idx
+        self.num_negatives = max(1, num_negatives)
         self.samples = []
         # Collect all positive items for hard-negative sampling
         self.all_items = np.arange(1, self.num_items + 1)
@@ -73,14 +80,96 @@ class SASRecDataset(Dataset):
         padded = seq + ([0] * pad_len)
 
         # Negative sampling: avoid every item already seen in the user's history.
-        neg = np.random.randint(1, self.num_items + 1)
-        while neg in positive_items:
+        negatives = []
+        used_negatives = set()
+        while len(negatives) < self.num_negatives:
             neg = np.random.randint(1, self.num_items + 1)
+            if neg in positive_items or neg in used_negatives:
+                continue
+            used_negatives.add(neg)
+            negatives.append(neg)
 
         return (
             torch.tensor(padded, dtype=torch.long),
             torch.tensor(target, dtype=torch.long),
-            torch.tensor(neg, dtype=torch.long),
+            torch.tensor(negatives, dtype=torch.long),
+        )
+
+
+class SASRecContinuationDataset(Dataset):
+    """
+    Temporal validation/test dataset.
+
+    Each sample predicts a future item using only the sequence prefix that
+    would have been available before that interaction happened.
+    """
+
+    def __init__(
+        self,
+        history_sequences: dict[int, list[str]],
+        future_sequences: dict[int, list[str]],
+        track2idx: dict,
+        max_len: int = MAX_SEQ_LEN,
+        num_negatives: int = 3,
+    ):
+        self.max_len = max_len
+        self.num_items = len(track2idx)
+        self.track2idx = track2idx
+        self.num_negatives = max(1, num_negatives)
+        self.samples = []
+
+        for user_id, history_seq in history_sequences.items():
+            future_seq = future_sequences.get(user_id)
+            if not future_seq:
+                continue
+
+            tagged = []
+            for tid in history_seq:
+                if tid in track2idx:
+                    tagged.append((track2idx[tid] + 1, False))
+            for tid in future_seq:
+                if tid in track2idx:
+                    tagged.append((track2idx[tid] + 1, True))
+
+            if len(tagged) < 3:
+                continue
+
+            deduped = [tagged[0]]
+            for item_idx, is_future in tagged[1:]:
+                if item_idx != deduped[-1][0]:
+                    deduped.append((item_idx, is_future))
+
+            prefix = []
+            seen_items = set()
+            for item_idx, is_future in deduped:
+                if len(prefix) >= 2 and is_future:
+                    self.samples.append((list(prefix), item_idx, set(seen_items)))
+                prefix.append(item_idx)
+                seen_items.add(item_idx)
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        input_seq, target, positive_items = self.samples[idx]
+
+        seq = input_seq[-self.max_len:]
+        pad_len = self.max_len - len(seq)
+        padded = seq + ([0] * pad_len)
+
+        negatives = []
+        used_negatives = set()
+        while len(negatives) < self.num_negatives:
+            neg = np.random.randint(1, self.num_items + 1)
+            if neg in positive_items or neg in used_negatives:
+                continue
+            used_negatives.add(neg)
+            negatives.append(neg)
+
+        return (
+            torch.tensor(padded, dtype=torch.long),
+            torch.tensor(target, dtype=torch.long),
+            torch.tensor(negatives, dtype=torch.long),
         )
 
 
@@ -310,12 +399,13 @@ class SASRecRecommender:
                 last_hidden = self.model._get_last_hidden(seq, seq_output)  # (batch, hidden)
 
                 pos_emb = self.model.item_embedding(pos)  # (batch, hidden)
-                neg_emb = self.model.item_embedding(neg)  # (batch, hidden)
+                neg_emb = self.model.item_embedding(neg)  # (batch, num_neg, hidden)
 
                 pos_score = (last_hidden * pos_emb).sum(dim=-1)
-                neg_score = (last_hidden * neg_emb).sum(dim=-1)
+                neg_score = (last_hidden.unsqueeze(1) * neg_emb).sum(dim=-1)
 
-                loss = -torch.log(torch.sigmoid(pos_score - neg_score) + 1e-8).mean()
+                margin = pos_score.unsqueeze(1) - neg_score
+                loss = -torch.log(torch.sigmoid(margin) + 1e-8).mean()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
                 optimizer.step()
@@ -338,8 +428,9 @@ class SASRecRecommender:
                     pos_emb = self.model.item_embedding(pos)
                     neg_emb = self.model.item_embedding(neg)
                     pos_score = (last_hidden * pos_emb).sum(dim=-1)
-                    neg_score = (last_hidden * neg_emb).sum(dim=-1)
-                    loss = -torch.log(torch.sigmoid(pos_score - neg_score) + 1e-8).mean()
+                    neg_score = (last_hidden.unsqueeze(1) * neg_emb).sum(dim=-1)
+                    margin = pos_score.unsqueeze(1) - neg_score
+                    loss = -torch.log(torch.sigmoid(margin) + 1e-8).mean()
                     val_total += loss.item() * len(pos)
                     val_n += len(pos)
 

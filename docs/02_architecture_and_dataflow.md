@@ -68,8 +68,8 @@ Backend 推荐请求到达
   → recommendation_service.get_recommendations()
     → _ml_pipeline_recommend()
       → from ml_pipeline.inference.pipeline import recommend  # 动态导入
-        → recall.py:  多路召回（ItemCF + SASRec + Popularity）
-        → ranking.py: DeepFM 精排
+        → recall.py:  多路召回（ItemCF 锚点 + SASRec 共识 + Tag + Genre-Popularity）
+        → ranking.py: 条件 DeepFM 精排
       ← 返回 [{track_id, score}, ...]
     → cache_recommendations() 写入 Redis
   ← 返回 JSON 给前端
@@ -138,23 +138,15 @@ Backend 推荐请求到达
     │  │    │   )                                             │
     │  │    │     │                                           │
     │  │    │     ├── Step 1: 多路召回 (recall.py)            │
-    │  │    │     │   ├── SASRec: 基于序列预测下一首           │
-    │  │    │     │   │   输入: ["DZ123","DZ456",...]         │
-    │  │    │     │   │   输出: [(track_id, score), ...] top 150 │
-    │  │    │     │   │                                       │
-    │  │    │     │   ├── ItemCF: 基于相似物品推荐             │
-    │  │    │     │   │   输入: user_id=42                    │
-    │  │    │     │   │   查找用户历史交互 → 找相似歌曲       │
-    │  │    │     │   │   输出: [(track_id, score), ...] top 150 │
-    │  │    │     │   │                                       │
-    │  │    │     │   └── Popularity: 热门歌曲补充             │
-    │  │    │     │       分数 = 1/(排名+1)，权重 0.3         │
-    │  │    │     │                                           │
-    │  │    │     │   合并去重: SASRec结果+SASRec∩ItemCF加权  │
+    │  │    │     │   ├── ItemCF: 主召回锚点                  │
+    │  │    │     │   ├── SASRec: 序列共识 / 无 ItemCF 时补位 │
+    │  │    │     │   ├── Tag: 曲风轻探索                     │
+    │  │    │     │   ├── Genre-Popularity: 热门兜底          │
+    │  │    │     │   合并方式: RRF 风格保守融合              │
     │  │    │     │   → candidates: {track_id: (score, src)} │
-    │  │    │     │   → 返回最多 350 个候选                   │
+    │  │    │     │   → 返回最多约 350 个候选                 │
     │  │    │     │                                           │
-    │  │    │     └── Step 2: DeepFM 精排 (ranking.py)        │
+    │  │    │     └── Step 2: 条件 DeepFM 精排 (ranking.py)   │
     │  │    │         输入: user_id + 350个候选track_id       │
     │  │    │         │                                       │
     │  │    │         │ 构建特征矩阵:                          │
@@ -325,7 +317,8 @@ Backend 推荐请求到达
 | L4 | 热门兜底 | MySQL `tracks` 表 (ORDER BY play_count) | 5-20ms | 所有场景（包括匿名用户） |
 
 L2 内部还有子降级：
-- 有 SASRec 模型 + 用户序列>=3 → `sasrec_deepfm` 或 `sasrec_only`
-- 有 ItemCF 模型 → `itemcf_deepfm` 或 `itemcf_only`
+- 有 ItemCF + 用户序列>=3 + SASRec → `itemcf_sasrec_consensus`
+- 有 ItemCF → `itemcf_anchor`
+- 无 ItemCF 但有 SASRec + 用户序列>=3 → `sasrec_only`
 - 无任何模型 → 直接跳到 L3/L4
 - DeepFM 排序失败 → 使用召回分数直接排序

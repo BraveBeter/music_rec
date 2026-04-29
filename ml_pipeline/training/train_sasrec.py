@@ -38,6 +38,17 @@ def _abort_if_cancelled(tracker, stage: str) -> bool:
     return False
 
 
+def _build_play_sequences(df: pd.DataFrame) -> dict[int, list[str]]:
+    """Build full chronological play sequences without pre-truncating to MAX_SEQ_LEN."""
+    play_df = df[df["interaction_type"].isin([1, 2])].sort_values("created_at")
+    sequences = {}
+    for user_id, group in play_df.groupby("user_id"):
+        seq = group["track_id"].tolist()
+        if len(seq) >= 3:
+            sequences[int(user_id)] = seq
+    return sequences
+
+
 def main():
     task_id = _get_task_id()
     tracker = None
@@ -53,22 +64,28 @@ def main():
     # Load data
     logger.info("Loading data...")
     track2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "track2idx.parquet")).values)
-
-    with open(os.path.join(PROCESSED_DATA_DIR, "user_sequences.json")) as f:
-        sequences = json.load(f)
-
+    train = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "train.parquet"))
+    val = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "val.parquet"))
     test = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "test.parquet"))
     all_interactions = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "all_interactions.parquet"))
+    train_sequences = _build_play_sequences(train)
+    val_sequences = _build_play_sequences(val)
+    train_val_sequences = _build_play_sequences(pd.concat([train, val], ignore_index=True))
 
-    logger.info(f"Sequences: {len(sequences)} users, Items: {len(track2idx)}")
+    logger.info(
+        f"Train sequences: {len(train_sequences)} users, "
+        f"Val sequences: {len(val_sequences)} users, Items: {len(track2idx)}"
+    )
 
-    epochs = 50
+    epochs = 25
     if task_id:
         from ml_pipeline.training.progress import ProgressTracker
         tracker = ProgressTracker(task_id, "train_sasrec", total_epochs=epochs)
         tracker.__enter__()
         tracker.update_phase("training", 0)
-        tracker.append_log(f"Loaded {len(sequences)} sequences, {len(track2idx)} items")
+        tracker.append_log(
+            f"Loaded {len(train_sequences)} train sequences, {len(val_sequences)} val sequences, {len(track2idx)} items"
+        )
 
     # Train with progress tracking via a patched fit
     sasrec = SASRecRecommender(hidden_dim=128, num_heads=2, num_blocks=2)
@@ -78,7 +95,7 @@ def main():
     sasrec.idx2track = {v: k for k, v in track2idx.items()}
     num_items = len(track2idx)
 
-    from ml_pipeline.models.sasrec import SASRec, SASRecDataset
+    from ml_pipeline.models.sasrec import SASRec, SASRecDataset, SASRecContinuationDataset
     import torch
     import torch.optim as optim
     from torch.utils.data import DataLoader
@@ -89,24 +106,35 @@ def main():
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
 
-    dataset = SASRecDataset(sequences, track2idx)
-    if len(dataset) == 0:
+    train_dataset = SASRecDataset(train_sequences, track2idx, num_negatives=3)
+    val_dataset = SASRecContinuationDataset(train_sequences, val_sequences, track2idx, num_negatives=3)
+    if len(train_dataset) == 0:
         logger.warning("No training samples.")
         if tracker:
             tracker.mark_completed({"error": "no_samples"})
             tracker.__exit__(None, None, None)
         return
+    if len(val_dataset) == 0:
+        logger.warning("No temporal validation samples.")
+        if tracker:
+            tracker.mark_completed({"error": "no_val_samples"})
+            tracker.__exit__(None, None, None)
+        return
+    logger.info(
+        f"SASRec training samples: {len(train_dataset)}, temporal val samples: {len(val_dataset)}"
+    )
+    if tracker:
+        tracker.append_log(
+            f"SASRec training samples: {len(train_dataset)}, temporal val samples: {len(val_dataset)}"
+        )
 
-    val_size = max(1, len(dataset) // 10)
-    train_size = len(dataset) - val_size
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-    train_loader = DataLoader(train_dataset, batch_size=128, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=128, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=256, shuffle=True, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=256, shuffle=False, num_workers=0)
 
     best_val_loss = float("inf")
     best_state = None
     no_improve = 0
-    patience = 12
+    patience = 6
 
     for epoch in range(epochs):
         model.train()
@@ -120,8 +148,9 @@ def main():
             pos_emb = model.item_embedding(pos)
             neg_emb = model.item_embedding(neg)
             pos_score = (last_hidden * pos_emb).sum(dim=-1)
-            neg_score = (last_hidden * neg_emb).sum(dim=-1)
-            loss = -torch.log(torch.sigmoid(pos_score - neg_score) + 1e-8).mean()
+            neg_score = (last_hidden.unsqueeze(1) * neg_emb).sum(dim=-1)
+            margin = pos_score.unsqueeze(1) - neg_score
+            loss = -torch.log(torch.sigmoid(margin) + 1e-8).mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
@@ -141,8 +170,9 @@ def main():
                 pos_emb = model.item_embedding(pos)
                 neg_emb = model.item_embedding(neg)
                 pos_score = (last_hidden * pos_emb).sum(dim=-1)
-                neg_score = (last_hidden * neg_emb).sum(dim=-1)
-                loss = -torch.log(torch.sigmoid(pos_score - neg_score) + 1e-8).mean()
+                neg_score = (last_hidden.unsqueeze(1) * neg_emb).sum(dim=-1)
+                margin = pos_score.unsqueeze(1) - neg_score
+                loss = -torch.log(torch.sigmoid(margin) + 1e-8).mean()
                 val_total += loss.item() * len(pos)
                 val_n += len(pos)
 
@@ -184,12 +214,8 @@ def main():
     # Evaluate
     logger.info("Evaluating SASRec...")
     user2idx = dict(pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "user2idx.parquet")).values)
-    train = pd.read_parquet(os.path.join(PROCESSED_DATA_DIR, "train.parquet"))
-    train_plays = train[train["interaction_type"].isin([1, 2])].sort_values("created_at")
-    user_train_seqs = train_plays.groupby("user_id")["track_id"].apply(list).to_dict()
-
     def sasrec_recommend(user_id):
-        seq = user_train_seqs.get(user_id, [])
+        seq = train_val_sequences.get(user_id, [])
         if len(seq) < 3:
             return []
         return sasrec.recommend(seq, top_k=20)

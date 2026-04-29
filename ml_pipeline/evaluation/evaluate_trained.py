@@ -24,6 +24,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from ml_pipeline.config import PROCESSED_DATA_DIR, MODEL_DIR
 from ml_pipeline.evaluation.metrics import evaluate_model, format_report
 from ml_pipeline.training.progress import ProgressTracker, EVAL_PROGRESS_DIR
+from ml_pipeline.inference.ranking import (
+    build_dense_feature_value,
+    build_deepfm_candidate_pool,
+    build_deepfm_prior_bonus,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -95,13 +100,14 @@ def _build_itemcf_fn(top_k=20, model_dir=None):
     return recommend
 
 
-def _build_sasrec_fn(train_df, top_k=20, model_dir=None):
+def _build_sasrec_fn(train_df, val_df=None, top_k=20, model_dir=None):
     from ml_pipeline.models.sasrec import SASRecRecommender
     logger.info("Loading SASRec model...")
     model = SASRecRecommender()
     model.load(path=model_dir)
 
-    train_plays = train_df[train_df["interaction_type"].isin([1, 2])].sort_values("created_at")
+    history_df = train_df if val_df is None else pd.concat([train_df, val_df], ignore_index=True)
+    train_plays = history_df[history_df["interaction_type"].isin([1, 2])].sort_values("created_at")
     user_train_seqs = train_plays.groupby("user_id")["track_id"].apply(list).to_dict()
 
     def recommend(user_id):
@@ -132,16 +138,16 @@ def _build_deepfm_fn(feature_meta, user_features, item_features,
             f"{len(feature_meta.get('dense_features', []))} dense"
         )
 
-    candidates = item_features.nlargest(candidate_pool_size, "log_popularity")
-    item_feat_idx = {row["track_id"]: row for _, row in candidates.iterrows()}
     user_feat_idx = {row["user_id"]: row for _, row in user_features.iterrows()}
 
     def recommend(user_id):
         user_row = user_feat_idx.get(user_id)
         if user_row is None:
             return []
-        sparse_rows, dense_rows, valid_candidates = [], [], []
-        for track_id, item_row in item_feat_idx.items():
+        candidates = build_deepfm_candidate_pool(item_features, user_row, candidate_pool_size=candidate_pool_size)
+        sparse_rows, dense_rows, valid_candidates, prior_bonus = [], [], [], []
+        for _, item_row in candidates.iterrows():
+            track_id = item_row["track_id"]
             sparse_vals = []
             for feat in sparse_features:
                 if feat == "user_idx":
@@ -160,26 +166,22 @@ def _build_deepfm_fn(feature_meta, user_features, item_features,
                 sparse_vals.append(val)
             dense_vals = []
             for feat in dense_features:
-                if feat in user_row.index:
-                    dense_vals.append(float(user_row[feat]))
-                elif feat in item_row.index:
-                    dense_vals.append(float(item_row[feat]))
-                else:
-                    dense_vals.append(0.0)
+                dense_vals.append(build_dense_feature_value(feat, user_row, item_row))
             sparse_rows.append(sparse_vals)
             dense_rows.append(dense_vals)
             valid_candidates.append(track_id)
+            prior_bonus.append(build_deepfm_prior_bonus(user_row, item_row))
         if not valid_candidates:
             return []
         sparse_array = np.array(sparse_rows, dtype=np.int64)
         dense_array = np.array(dense_rows, dtype=np.float32)
-        scores = model.predict(sparse_array, dense_array)
+        scores = model.predict(sparse_array, dense_array) + np.array(prior_bonus, dtype=np.float32)
         ranked = sorted(zip(valid_candidates, scores), key=lambda x: x[1], reverse=True)
         return [(tid, float(s)) for tid, s in ranked[:top_k]]
     return recommend
 
 
-def _build_funnel_fn(train_df, top_k=20):
+def _build_funnel_fn(train_df, val_df=None, top_k=20):
     from ml_pipeline.inference.pipeline import recommend
 
     # Reset singletons so funnel picks up latest saved models
@@ -195,7 +197,8 @@ def _build_funnel_fn(train_df, top_k=20):
     ranking_mod._track2idx = None
     ranking_mod._onnx_session = None
 
-    train_plays = train_df[train_df["interaction_type"].isin([1, 2])].sort_values("created_at")
+    history_df = train_df if val_df is None else pd.concat([train_df, val_df], ignore_index=True)
+    train_plays = history_df[history_df["interaction_type"].isin([1, 2])].sort_values("created_at")
     user_train_seqs = train_plays.groupby("user_id")["track_id"].apply(list).to_dict()
 
     def recommend_fn(user_id):
@@ -332,7 +335,7 @@ def main(task_id: str | None = None, model_filter: str | None = None,
         phase_idx += 1
         _phase("Evaluating SASRec", phase_idx)
         _log("Evaluating SASRec...")
-        sasrec_fn = _build_sasrec_fn(train, top_k=20, model_dir=version_dir)
+        sasrec_fn = _build_sasrec_fn(train, data["val"], top_k=20, model_dir=version_dir)
         results.append(evaluate_model(
             "SASRec", sasrec_fn, test, all_interactions,
             k_values=k_values, num_items=num_items,
@@ -348,7 +351,7 @@ def main(task_id: str | None = None, model_filter: str | None = None,
             phase_idx += 1
             _phase("Evaluating Multi-recall Funnel", phase_idx)
             _log("Evaluating Multi-recall Funnel...")
-            funnel_fn = _build_funnel_fn(train, top_k=20)
+            funnel_fn = _build_funnel_fn(train, data["val"], top_k=20)
             results.append(evaluate_model(
                 "Multi-recall Funnel", funnel_fn, test, all_interactions,
                 k_values=k_values, num_items=num_items,

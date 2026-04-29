@@ -356,16 +356,22 @@ recommend(user_id, user_sequence, popular_tracks, top_k=20, use_onnx=False)
   ├── 策略选择:
   │   if 无任何模型 → "popularity_cold_start"
   │   if 无序列 && user_id==None → "cold_start_popular"
-  │   if 有序列(>=3) && 有sasrec → "sasrec_deepfm" 或 "sasrec_only"
-  │   if 有itemcf → "itemcf_deepfm" 或 "itemcf_only"
+  │   if 有itemcf && 有序列(>=3) && 有sasrec → "itemcf_sasrec_consensus"
+  │   if 有itemcf → "itemcf_anchor"
+  │   if 无itemcf 但有序列(>=3) && 有sasrec → "sasrec_only"
   │   else → "popularity_fallback"
   │
   ├── Step 1: multi_recall() 多路召回
   │   返回 list[(track_id, score, source)]，已去重合并
   │
   ├── Step 2: rank_candidates() 精排
-  │   if 有deepfm && user_id != None → DeepFM 排序
-  │   else → 直接用召回分数
+  │   if 候选前部缺少 itemcf 支撑 && 有deepfm && user_id != None:
+  │      → DeepFM 排序
+  │   else:
+  │      → 直接用召回分数
+  │
+  ├── Step 2.5: apply_mmr_rerank() 多样性重排
+  │   仅在头部结果曲风过于集中时触发
   │
   └── Step 3: 格式化输出
       → {"strategy", "is_fallback", "items": [{"track_id", "score"}, ...], "debug": {...}}
@@ -376,32 +382,45 @@ recommend(user_id, user_sequence, popular_tracks, top_k=20, use_onnx=False)
 ```
 multi_recall(user_id, user_sequence, popular_tracks, itemcf_k=150, sasrec_k=150, popularity_k=50)
   │
-  ├── SASRec 召回 (优先级最高):
-  │   if user_sequence 长度 >= 3:
-  │     sasrec_recall(user_sequence, top_k=150)
-  │     → SASRecRecommender.recommend(seq, top_k)
-  │     → 将序列 pad 到 MAX_SEQ_LEN → Transformer 前向传播 → 全量打分 → top_k
-  │     → 结果写入 candidates[track_id] = (score, "sasrec")
-  │
-  ├── ItemCF 召回:
+  ├── ItemCF 召回 (主锚点):
   │   if user_id != None:
   │     itemcf_recall(user_id, top_k=150)
   │     → ItemCF.recommend(user_id, top_k)
-  │     → 查找用户历史交互物品 → 对每个物品找 top_k_similar 个相似物
-  │     → 加权求和: score = Σ(similar(item, historic_item) * user_weight)
-  │     → 排除已交互物品 → top_k
-  │     → 如果 track_id 已在 candidates 中（来自 SASRec）:
-  │         candidates[track_id] = (原分 + 新分*0.5, "sasrec+itemcf")  # 融合加分
-  │       否则:
-  │         candidates[track_id] = (score, "itemcf")
+  │     → 每个结果写入: 0.20 anchor bias + 0.50 * RRF(rank)
   │
-  ├── Popularity 召回 (补充):
-  │   popularity_recall(popular_tracks, top_k=50)
-  │   → 分数 = 1/(排名+1) * 0.3（降权）
-  │   → 仅添加 candidates 中不存在的 track_id
+  ├── SASRec 召回 (共识增强 / 无 ItemCF 时补位):
+  │   if user_sequence 长度 >= 3:
+  │     sasrec_recall(user_sequence, top_k=150)
+  │     → 先计算 confidence
+  │     → confidence < 0.20 时直接忽略
+  │     → 有 ItemCF 时:
+  │         主要给已有 itemcf 候选做轻量共识加分
+  │         权重 = 0.05 * RRF(rank)
+  │         只有 itemcf 候选不足 80 个时才允许引入少量新候选
+  │     → 无 ItemCF 时:
+  │         作为主召回，权重 = 0.60 * RRF(rank) + 0.10 anchor bias
+  │
+  ├── Tag 召回 (曲风轻探索):
+  │   if user_sequence 长度 >= 3:
+  │     tag_based_recall(user_sequence, top_k=50)
+  │     → 有 ItemCF 时仅做极轻探索 (0.01 * RRF)
+  │     → 无 ItemCF 时权重提升为 0.15
+  │
+  ├── Genre-Popularity 召回 (兜底):
+  │   genre_weighted_popularity_recall(popular_tracks, top_k=50)
+  │   → 有 ItemCF 时权重极低 (0.005)
+  │   → 无 ItemCF 时权重提升到 0.08
+  │   → 仅在候选集偏少时补齐
   │
   └── 按 score 降序排序 → 返回 list[(track_id, score, source)]
 ```
+
+**当前召回设计要点**：
+
+- 不是多模型平权融合，而是 `ItemCF` 主导、`SASRec` 做顺序共识
+- `Tag / Genre-Popularity` 主要负责轻探索和兜底
+- 召回融合采用 RRF 风格保守加权，而不是简单线性混分
+- 目标是尽量不让弱于 `ItemCF` 的模型破坏主排序
 
 **模型懒加载**：`_get_item_cf()` 和 `_get_sasrec()` 使用全局变量 + 延迟实例化，首次调用时才从磁盘加载模型文件，后续调用直接复用。
 
@@ -421,11 +440,17 @@ rank_candidates(user_id, candidate_track_ids, recall_scores, top_k=20, use_onnx=
   ├── 为每个候选 track 构建特征:
   │   for track_id in candidate_track_ids:
   │     查找 item_features 中该 track 的行
-  │     sparse_vals = [user_idx, track_idx, age_bucket, gender, country_idx]  # 5维
+  │     sparse_vals = [user_idx, track_idx, age_bucket, gender, country_idx,
+  │                    artist_idx, primary_genre_idx, top_artist_idx, top_genre_idx,
+  │                    last_artist_idx, last_genre_idx]
   │     dense_vals  = [interaction_count, play_count, like_count, avg_completion, avg_rating,
   │                    danceability, energy, tempo, valence, acousticness,
   │                    log_popularity, item_interaction_count, item_avg_completion,
-  │                    item_avg_rating, item_like_ratio]  # 15维
+  │                    item_avg_rating, item_like_ratio,
+  │                    artist_diversity, genre_diversity,
+  │                    top_artist_share, top_genre_share,
+  │                    top_artist_match, top_genre_match,
+  │                    last_artist_match, last_genre_match]
   │
   ├── 批量推理:
   │   if use_onnx:
@@ -434,12 +459,27 @@ rank_candidates(user_id, candidate_track_ids, recall_scores, top_k=20, use_onnx=
   │     _deepfm.predict(sparse_array, dense_array)  # PyTorch 推理
   │   → scores: ndarray of sigmoid probabilities
   │
-  ├── 分数融合:
-  │   for i, track_id:
-  │     final_score = scores[i] * 0.7 + recall_scores[track_id] * 0.3
+  ├── 元数据先验校准:
+  │   +0.20 * top_artist_match
+  │   +0.10 * last_artist_match
+  │   +0.05 * top_genre_match
+  │   +0.05 * last_genre_match
+  │
+  ├── 候选内归一化后与召回融合:
+  │   final_score = normalized_recall_score * 0.85 + normalized_deepfm_score * 0.15
   │
   └── 按 final_score 降序排序 → 返回 top_k 个 (track_id, score)
 ```
+
+#### `pipeline.py` 中的精排/重排门控
+
+- **DeepFM 门控**：
+  只看召回前 `max(top_k*2, 40)` 个候选；如果其中已经有大量 `itemcf` 支撑的结果，
+  就直接跳过 DeepFM，避免弱排序模型破坏强协同过滤结果。
+
+- **MMR 门控**：
+  仅当头部结果中单一主曲风占比达到 60% 以上时，才触发多样性重排。
+  当前参数是 `lambda=0.85`、`max_per_genre=4`，偏向 relevance，不强行牺牲主指标。
 
 ### 4.3.4 DeepFM 模型架构 (`ml_pipeline/models/deepfm.py`)
 

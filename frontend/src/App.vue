@@ -13,6 +13,7 @@ const artistFavStore = useArtistFavoritesStore()
 onMounted(() => {
   // Restore favorites if user was already logged in (e.g. page refresh)
   if (auth.isLoggedIn) {
+    auth.loadProfile().catch(() => {})
     if (!favStore.loaded) favStore.loadFavorites()
     if (!artistFavStore.loaded) artistFavStore.loadFavorites()
   }

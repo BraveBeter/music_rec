@@ -90,6 +90,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import LogDialog from '@/components/LogDialog.vue'
 import { useTrainingStore } from '@/stores/training'
 import type { TaskProgress } from '@/stores/training'
+import type { BadgeStatus } from '@/components/LogDialog.vue'
 
 const store = useTrainingStore()
 
@@ -143,12 +144,12 @@ async function startAll() {
 const logVisible = ref(false)
 const logTitle = ref('')
 const logLines = ref<string[]>([])
-const logStatus = ref<string | undefined>()
+const logStatus = ref<BadgeStatus | undefined>()
 
 function openLog(task: TaskProgress) {
   logTitle.value = formatType(task.task_type) + ' — 训练日志'
   logLines.value = task.log_lines || []
-  logStatus.value = task.status
+  logStatus.value = task.status as BadgeStatus
   logVisible.value = true
 }
 

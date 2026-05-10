@@ -102,6 +102,11 @@ class DeezerImportRequest(BaseModel):
     limit_per_genre: int = 30
 
 
+class JamendoImportRequest(BaseModel):
+    genres: list[str] = ["rock", "pop", "hiphop", "electronic", "jazz", "classical", "rnb", "latin"]
+    limit_per_genre: int = 50
+
+
 @router.post("/deezer-import")
 async def deezer_import(
     req: DeezerImportRequest,
@@ -175,6 +180,104 @@ async def deezer_import(
                 if tag_row:
                     await db.execute(text("INSERT IGNORE INTO track_tags (track_id, tag_id) VALUES (:tid, :tagid)"),
                                      {"tid": track_id, "tagid": tag_row[0]})
+
+                total_inserted += 1
+
+    await db.commit()
+    return {"inserted": total_inserted}
+
+
+@router.post("/jamendo-import")
+async def jamendo_import(
+    req: JamendoImportRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    """Fetch tracks from Jamendo API by genre with full audio streams."""
+    import httpx
+    import random
+
+    del admin
+
+    genre_name_map = {
+        "pop": "Pop", "rock": "Rock", "hiphop": "Hip-Hop",
+        "electronic": "Electronic", "jazz": "Jazz", "classical": "Classical",
+        "rnb": "R&B", "latin": "Latin",
+    }
+    jamendo_client_id = "f2b6da64"
+    total_inserted = 0
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        for genre_query in req.genres:
+            genre_name = genre_name_map.get(genre_query, genre_query)
+            try:
+                resp = await client.get(
+                    "https://api.jamendo.com/v3.0/tracks",
+                    params={
+                        "client_id": jamendo_client_id,
+                        "format": "json",
+                        "limit": req.limit_per_genre,
+                        "include": "musicinfo",
+                        "audioformat": "mp32",
+                        "tags": genre_query,
+                        "order": "popularity_total",
+                    },
+                )
+                if resp.status_code != 200:
+                    logger.warning(f"Jamendo API returned {resp.status_code} for '{genre_query}'")
+                    continue
+                tracks = resp.json().get("results", [])
+            except Exception as e:
+                logger.warning(f"Jamendo API error for '{genre_query}': {e}")
+                continue
+
+            for t in tracks:
+                track_id = f"JM{t['id']}"
+                result = await db.execute(select(Track).where(Track.track_id == track_id))
+                if result.scalar_one_or_none():
+                    continue
+
+                await db.execute(text("""
+                    INSERT IGNORE INTO tracks
+                    (track_id, title, artist_name, album_name, duration_ms, play_count, preview_url, cover_url, status)
+                    VALUES (:track_id, :title, :artist_name, :album_name, :duration_ms, 0, :preview_url, :cover_url, 1)
+                """), {
+                    "track_id": track_id,
+                    "title": t.get("name", "Unknown"),
+                    "artist_name": t.get("artist_name"),
+                    "album_name": t.get("album_name"),
+                    "duration_ms": (t.get("duration", 30)) * 1000,
+                    "preview_url": t.get("audio"),
+                    "cover_url": t.get("image"),
+                })
+
+                musicinfo = t.get("musicinfo", {})
+                speed = musicinfo.get("speed", "medium")
+                speed_map = {"slow": 0.4, "medium": 0.6, "fast": 0.8}
+                energy_base = speed_map.get(speed, 0.5)
+                vocal = musicinfo.get("vocalinstrumental", "vocal")
+                acoustic_base = 0.3 if vocal == "instrumental" else 0.1
+
+                await db.execute(text("""
+                    INSERT IGNORE INTO track_features (track_id, danceability, energy, tempo, valence, acousticness)
+                    VALUES (:track_id, :danceability, :energy, :tempo, :valence, :acousticness)
+                """), {
+                    "track_id": track_id,
+                    "danceability": round(random.uniform(0.3, 0.9), 3),
+                    "energy": round(energy_base + random.uniform(-0.1, 0.1), 3),
+                    "tempo": round(random.uniform(80, 160), 1),
+                    "valence": round(random.uniform(0.2, 0.9), 3),
+                    "acousticness": round(acoustic_base + random.uniform(-0.05, 0.05), 3),
+                })
+
+                await db.execute(text("INSERT IGNORE INTO tags (tag_name) VALUES (:tag)"), {"tag": genre_name})
+                tag_result = await db.execute(text("SELECT tag_id FROM tags WHERE tag_name = :tag"), {"tag": genre_name})
+                tag_row = tag_result.first()
+                if tag_row:
+                    await db.execute(
+                        text("INSERT IGNORE INTO track_tags (track_id, tag_id) VALUES (:tid, :tagid)"),
+                        {"tid": track_id, "tagid": tag_row[0]},
+                    )
 
                 total_inserted += 1
 

@@ -57,10 +57,12 @@ import { ref, computed } from 'vue'
 import LogPanel from './LogPanel.vue'
 import StatusBadge from './StatusBadge.vue'
 
+export type BadgeStatus = 'running' | 'completed' | 'error' | 'idle' | 'disabled' | 'cancelled' | 'interrupted'
+
 const props = defineProps<{
   title: string
   lines: string[]
-  status?: string
+  status?: BadgeStatus
   report?: any[]  // evaluation results array from per-task report JSON
 }>()
 

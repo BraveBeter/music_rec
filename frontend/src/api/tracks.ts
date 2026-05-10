@@ -1,8 +1,11 @@
 /** Tracks, Recommendations & User API calls */
 import apiClient from './client'
-import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, GenreTracksResponse, GroupedSimilarResponse, PlaybackHistoryItem } from '@/types'
+import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, GenreTracksResponse, GroupedSimilarResponse, PlaybackHistoryItem, User } from '@/types'
 
 export const usersApi = {
+  profile() {
+    return apiClient.get<User>('/users/me')
+  },
   stats() {
     return apiClient.get<{ play_count: number; favorites_count: number; days_registered: number }>('/users/me/stats')
   },

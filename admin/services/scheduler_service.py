@@ -197,19 +197,22 @@ class SchedulerService:
                 delta = current_count - last_count
                 logger.info(f"Threshold check: current={current_count}, last={last_count}, delta={delta}")
 
+                triggered = False
                 for schedule in threshold_schedules:
                     threshold = schedule.threshold_interactions or 0
                     if delta >= threshold > 0:
                         logger.info(f"Threshold triggered for schedule {schedule.schedule_id}: delta={delta} >= {threshold}")
                         await self._execute_scheduled_task(schedule.schedule_id)
+                        triggered = True
 
-                # Update threshold state
-                if state:
-                    state.last_training_count = current_count
-                else:
-                    state = TrainingThresholdState(last_training_count=current_count)
-                    session.add(state)
-                await session.commit()
+                # Only update watermark when training was actually triggered
+                if triggered:
+                    if state:
+                        state.last_training_count = current_count
+                    else:
+                        state = TrainingThresholdState(last_training_count=current_count)
+                        session.add(state)
+                    await session.commit()
         except Exception as e:
             logger.error(f"Error checking thresholds: {e}")
 

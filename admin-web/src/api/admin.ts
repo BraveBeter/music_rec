@@ -10,10 +10,14 @@ export const getSystemStatus = () => adminClient.get('/admin/status')
 // Data generation
 export const generateLastfm = () => adminClient.post('/admin/data/generate-lastfm')
 export const generateSynthetic = () => adminClient.post('/admin/data/generate-synthetic')
+export const enrichLastfmMedia = (limit = 500) =>
+  adminClient.post('/admin/data/enrich-lastfm-media', null, { params: { limit } })
 
 // Track import
 export const importDeezer = (genres?: string[], limitPerGenre?: number) =>
   adminClient.post('/admin/tracks/deezer-import', { genres, limit_per_genre: limitPerGenre })
+export const importJamendo = (genres?: string[], limitPerGenre?: number) =>
+  adminClient.post('/admin/tracks/jamendo-import', { genres, limit_per_genre: limitPerGenre })
 
 // Training — trigger
 export const runPreprocess = () => adminClient.post('/admin/training/preprocess')

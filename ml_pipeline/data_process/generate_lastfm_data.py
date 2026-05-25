@@ -10,7 +10,9 @@ Produces ~800 users with ~200K+ interactions and thousands of real tracks.
 Hardware target: Mac M5 16GB RAM
 Usage:
     uv run python -m ml_pipeline.data_process.generate_lastfm_data
+    uv run python -m ml_pipeline.data_process.generate_lastfm_data --enrich-media
 """
+import argparse
 import asyncio
 import sys
 import os
@@ -26,6 +28,8 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+
+from ml_pipeline.data_process.enrich_lastfm_media import enrich_lastfm_media
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
@@ -737,7 +741,7 @@ async def _insert_user(session, idx: int, age: int, gender: int, country: str) -
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-async def generate():
+async def generate(*, enrich_media: bool = False):
     logger.info("=" * 60)
     logger.info("Last.FM 1K Data Generator (Real Tracks)")
     logger.info(f"Target: {NUM_TARGET_USERS} users with real listening history")
@@ -855,6 +859,18 @@ async def generate():
 
     await engine.dispose()
 
+    if enrich_media:
+        logger.info("Starting Last.fm media enrichment for newly generated tracks...")
+        stats = await enrich_lastfm_media(track_prefix="LFM", only_missing=True)
+        logger.info("Last.fm media enrichment complete: %s", stats)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate Last.FM users and interactions")
+    parser.add_argument("--enrich-media", action="store_true", default=False)
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    asyncio.run(generate())
+    args = _parse_args()
+    asyncio.run(generate(enrich_media=args.enrich_media))

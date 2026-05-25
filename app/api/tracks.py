@@ -1,13 +1,22 @@
 """Track endpoints."""
 import logging
 import httpx
+import re
+import unicodedata
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.track import TrackResponse, TrackListResponse, GenreTracksResponse, GenreTracksItem
-from app.services.track_service import get_tracks, get_track_by_id, get_popular_tracks, get_diverse_popular_tracks, get_genre_random, get_genre_ranking
+from app.services.track_service import (
+    get_tracks,
+    get_track_by_id,
+    get_diverse_popular_tracks,
+    get_genre_random,
+    get_genre_ranking,
+    get_new_releases,
+)
 
 router = APIRouter(prefix="/tracks", tags=["Tracks"])
 logger = logging.getLogger("music_rec")
@@ -19,6 +28,80 @@ _PROXY_HEADERS = {
     "Origin": "https://www.deezer.com",
     "Accept": "audio/mpeg, audio/mp4, audio/*;q=0.9, */*;q=0.8",
 }
+
+_WHITESPACE_RE = re.compile(r"\s+")
+_PUNCT_RE = re.compile(r"[^\w\s]")
+_VERSION_RE = re.compile(r"\(([^)]*)\)|\[([^\]]*)\]")
+_VERSION_HINTS = ("live", "remaster", "remastered", "version", "edit")
+
+
+def _normalize_match_text(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKC", value).casefold().strip()
+
+    def _strip_version(match: re.Match[str]) -> str:
+        content = match.group(1) or match.group(2) or ""
+        if any(token in content.casefold() for token in _VERSION_HINTS):
+            return " "
+        return f" {content} "
+
+    normalized = _VERSION_RE.sub(_strip_version, normalized)
+    normalized = normalized.replace("&", " and ")
+    normalized = _PUNCT_RE.sub(" ", normalized)
+    normalized = _WHITESPACE_RE.sub(" ", normalized)
+    return normalized.strip()
+
+
+def _metadata_matches(track, title: str | None, artist: str | None) -> bool:
+    return (
+        _normalize_match_text(track.title) == _normalize_match_text(title)
+        and _normalize_match_text(track.artist_name) == _normalize_match_text(artist)
+    )
+
+
+def _is_deezer_preview_url(url: str | None) -> bool:
+    if not url:
+        return False
+    return url.startswith("deezer:") or "dzcdn.net" in url or "deezer.com" in url
+
+
+def _is_audio_response(resp: httpx.Response) -> bool:
+    content_type = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+    if not content_type:
+        return True
+    return (
+        content_type.startswith("audio/")
+        or content_type in {"application/octet-stream", "binary/octet-stream"}
+    )
+
+
+async def _fetch_deezer_preview_by_id(client: httpx.AsyncClient, deezer_id: str) -> str | None:
+    api_resp = await client.get(
+        f"https://api.deezer.com/track/{deezer_id}",
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    if api_resp.status_code != 200:
+        return None
+    return api_resp.json().get("preview")
+
+
+async def _search_fresh_deezer_preview(client: httpx.AsyncClient, track) -> str | None:
+    api_resp = await client.get(
+        "https://api.deezer.com/search",
+        params={"q": f'track:"{track.title}" artist:"{track.artist_name or ""}"', "limit": 10},
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    if api_resp.status_code != 200:
+        return None
+
+    for item in api_resp.json().get("data", []):
+        artist = (item.get("artist") or {}).get("name")
+        if _metadata_matches(track, item.get("title"), artist):
+            preview = item.get("preview")
+            if preview:
+                return preview
+    return None
 
 
 @router.get("", response_model=TrackListResponse)
@@ -45,6 +128,16 @@ async def popular_tracks(
 ):
     """Get popular tracks with genre diversity."""
     tracks = await get_diverse_popular_tracks(db, limit=limit, max_per_genre=3)
+    return [TrackResponse.model_validate(t) for t in tracks]
+
+
+@router.get("/new-releases", response_model=list[TrackResponse])
+async def new_release_tracks(
+    limit: int = Query(12, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get latest tracks by release year and import time."""
+    tracks = await get_new_releases(db, limit=limit)
     return [TrackResponse.model_validate(t) for t in tracks]
 
 
@@ -103,17 +196,21 @@ async def proxy_preview(track_id: str, db: AsyncSession = Depends(get_db)):
         dz_numeric_id = track_id[2:]
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                api_resp = await client.get(
-                    f"https://api.deezer.com/track/{dz_numeric_id}",
-                    headers={"User-Agent": "Mozilla/5.0"},
-                )
-                if api_resp.status_code == 200:
-                    api_data = api_resp.json()
-                    fresh_url = api_data.get("preview")
-                    if fresh_url:
-                        logger.debug(f"Got fresh signed URL for {track_id}")
+                fresh_url = await _fetch_deezer_preview_by_id(client, dz_numeric_id)
+                if fresh_url:
+                    logger.debug(f"Got fresh signed URL for {track_id}")
         except Exception as e:
             logger.warning(f"Could not fetch fresh Deezer URL for {track_id}: {e}")
+        stream_url = fresh_url or track.preview_url
+    elif track_id.startswith("LFM") and _is_deezer_preview_url(track.preview_url):
+        # LFM tracks keep their own IDs, so refresh Deezer previews by metadata.
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                fresh_url = await _search_fresh_deezer_preview(client, track)
+                if fresh_url:
+                    logger.debug(f"Got fresh Deezer URL for {track_id} by metadata")
+        except Exception as e:
+            logger.warning(f"Could not refresh Deezer URL for {track_id}: {e}")
         stream_url = fresh_url or track.preview_url
     logger.debug(f"Proxying audio for {track_id}")
 
@@ -139,10 +236,16 @@ async def proxy_preview(track_id: str, db: AsyncSession = Depends(get_db)):
                 client.build_request("GET", url, headers=_PROXY_HEADERS),
                 stream=True,
             )
-            if resp.status_code in (200, 206):
+            if resp.status_code in (200, 206) and _is_audio_response(resp):
                 cdn_resp = resp
                 break
-            logger.warning(f"CDN returned {resp.status_code} for track {track_id} (url={url[:80]}...)")
+            logger.warning(
+                "CDN returned unusable response for track %s: status=%s content_type=%s url=%s...",
+                track_id,
+                resp.status_code,
+                resp.headers.get("content-type"),
+                url[:80],
+            )
             await resp.aclose()
     except (httpx.TimeoutException, httpx.ConnectError) as e:
         logger.warning(f"CDN connection failed for {track_id}: {type(e).__name__}")
@@ -183,4 +286,3 @@ async def get_track(track_id: str, db: AsyncSession = Depends(get_db)):
     if not track:
         raise HTTPException(status_code=404, detail="Track not found")
     return TrackResponse.model_validate(track)
-

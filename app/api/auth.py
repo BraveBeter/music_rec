@@ -41,6 +41,10 @@ async def register(req: RegisterRequest, response: Response, db: AsyncSession = 
         user_id=user.user_id,
         username=user.username,
         role=user.role,
+        age=user.age,
+        gender=user.gender,
+        country=user.country,
+        created_at=user.created_at.isoformat() if user.created_at else None,
     )
 
 
@@ -68,6 +72,10 @@ async def login(req: LoginRequest, response: Response, db: AsyncSession = Depend
         user_id=user.user_id,
         username=user.username,
         role=user.role,
+        age=user.age,
+        gender=user.gender,
+        country=user.country,
+        created_at=user.created_at.isoformat() if user.created_at else None,
     )
 
 

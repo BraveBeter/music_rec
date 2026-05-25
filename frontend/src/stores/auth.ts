@@ -35,16 +35,29 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('user_info', JSON.stringify(user.value))
   }
 
+  async function loadProfile() {
+    if (!accessToken.value) return null
+    const { usersApi } = await import('@/api/tracks')
+    const { data } = await usersApi.profile()
+    setAuth(accessToken.value, data)
+    return data
+  }
+
   async function login(username: string, password: string) {
     const { data } = await authApi.login({ username, password })
     setAuth(data.access_token, {
       user_id: data.user_id,
       username: data.username,
       role: data.role,
+      age: data.age,
+      gender: data.gender,
+      country: data.country,
+      created_at: data.created_at || undefined,
     })
     // Load favorites after login
     const { useFavoritesStore } = await import('@/stores/favorites')
     useFavoritesStore().loadFavorites()
+    await loadProfile()
     return data
   }
 
@@ -54,7 +67,12 @@ export const useAuthStore = defineStore('auth', () => {
       user_id: data.user_id,
       username: data.username,
       role: data.role,
+      age: data.age,
+      gender: data.gender,
+      country: data.country,
+      created_at: data.created_at || undefined,
     })
+    await loadProfile()
     return data
   }
 
@@ -83,5 +101,5 @@ export const useAuthStore = defineStore('auth', () => {
     router.push('/login')
   }
 
-  return { accessToken, user, isLoggedIn, isAdmin, login, register, refreshToken, logout, setAuth }
+  return { accessToken, user, isLoggedIn, isAdmin, login, register, refreshToken, logout, setAuth, loadProfile }
 })

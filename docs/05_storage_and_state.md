@@ -72,17 +72,18 @@
 | `title` | VARCHAR(255) | NOT NULL | 歌曲标题 |
 | `artist_name` | VARCHAR(255) | NULL | 歌手/艺术家名 |
 | `album_name` | VARCHAR(255) | NULL | 专辑名 |
-| `release_year` | INT | NULL | 发行年份 |
+| `release_year` | INT | NULL | 发行年份，新歌速递排序主键之一 |
 | `duration_ms` | INT | NULL | 时长（毫秒），从 Deezer API 获取 |
 | `play_count` | INT | NOT NULL, DEFAULT 0 | 累计播放次数，每次 play 交互 +1 |
 | `status` | TINYINT | NOT NULL, DEFAULT 1 | 状态：1=正常，0=已下架 |
 | `preview_url` | VARCHAR(512) | NULL | 试听音频 URL（Deezer CDN，含时效签名） |
 | `cover_url` | VARCHAR(512) | NULL | 封面图 URL |
-| `created_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 入库时间 |
+| `created_at` | TIMESTAMP | NOT NULL, DEFAULT CURRENT_TIMESTAMP | 入库时间，新歌速递次排序键 |
 
 **索引**：
 - `idx_status(status)` — 按状态过滤
 - `idx_play_count(play_count DESC)` — 热门排行排序
+- `idx_new_releases(status, release_year DESC, created_at DESC)` — 发现页“新歌速递”排序
 
 #### `user_interactions` — 用户行为日志表
 

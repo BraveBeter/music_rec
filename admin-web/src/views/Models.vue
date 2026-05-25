@@ -174,6 +174,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import LogDialog from '@/components/LogDialog.vue'
 import { getSystemStatus, runEvaluation, trainingStreamUrl, getEvalHistory, listEvalProgress, getEvalReport, getModelVersions, promoteModelVersion } from '@/api/admin'
 import { useAuthStore } from '@/stores/auth'
+import type { BadgeStatus } from '@/components/LogDialog.vue'
 
 interface ModelInfo {
   available: boolean
@@ -420,13 +421,13 @@ function formatReport(report: Record<string, any>) {
 const logVisible = ref(false)
 const logTitle = ref('')
 const logLines = ref<string[]>([])
-const logStatus = ref<string | undefined>()
+const logStatus = ref<BadgeStatus | undefined>()
 const logReport = ref<any[]>([])
 
 async function openEvalLog(task: any) {
   logTitle.value = '模型评测 — 日志'
   logLines.value = task.log_lines || []
-  logStatus.value = task.status
+  logStatus.value = task.status as BadgeStatus
   logReport.value = []
 
   if (['completed'].includes(task.status) && task.task_id) {

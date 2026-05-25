@@ -1,8 +1,11 @@
 /** Tracks, Recommendations & User API calls */
 import apiClient from './client'
-import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, GenreTracksResponse, GroupedSimilarResponse, PlaybackHistoryItem } from '@/types'
+import type { Track, TrackListResponse, RecommendationResponse, InteractionCreate, GenreTracksResponse, GroupedSimilarResponse, PlaybackHistoryItem, User } from '@/types'
 
 export const usersApi = {
+  profile() {
+    return apiClient.get<User>('/users/me')
+  },
   stats() {
     return apiClient.get<{ play_count: number; favorites_count: number; days_registered: number }>('/users/me/stats')
   },
@@ -25,6 +28,10 @@ export const tracksApi = {
 
   popular(limit = 20) {
     return apiClient.get<Track[]>('/tracks/popular', { params: { limit } })
+  },
+
+  newReleases(limit = 12) {
+    return apiClient.get<Track[]>('/tracks/new-releases', { params: { limit } })
   },
 
   genreRandom(perGenre = 5) {

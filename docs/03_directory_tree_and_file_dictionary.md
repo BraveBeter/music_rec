@@ -16,7 +16,7 @@ music_rec/
 │   │   ├── __init__.py                     # 空文件
 │   │   ├── auth.py                         # [路由] 认证端点：注册、登录、刷新令牌、登出
 │   │   ├── users.py                        # [路由] 用户端点：个人信息、修改资料、统计数据、收藏ID列表
-│   │   ├── tracks.py                       # [路由] 歌曲端点：列表搜索、热门排行、单曲详情、音频代理
+│   │   ├── tracks.py                       # [路由] 歌曲端点：列表搜索、新歌速递、曲风浏览、单曲详情、音频代理
 │   │   ├── interactions.py                 # [路由] 交互端点：记录行为事件、查询历史
 │   │   ├── recommendations.py             # [路由] 推荐端点：获取个性化推荐 Feed
 │   │   └── favorites.py                    # [路由] 收藏端点：收藏列表、添加收藏、取消收藏
@@ -44,7 +44,7 @@ music_rec/
 │   ├── services/                           # [目录] 业务逻辑层，被 API 路由调用
 │   │   ├── __init__.py                     # 空文件
 │   │   ├── auth_service.py                 # [服务] register_user、authenticate_user、generate_tokens
-│   │   ├── track_service.py                # [服务] get_tracks(分页搜索)、get_track_by_id、get_popular_tracks
+│   │   ├── track_service.py                # [服务] get_tracks(分页搜索)、get_new_releases、get_track_by_id、get_popular_tracks、get_genre_random、get_genre_ranking
 │   │   ├── interaction_service.py          # [服务] log_interaction(MySQL+Redis双写)、get_user_history、get_user_sequence_from_redis
 │   │   └── recommendation_service.py      # [服务] get_recommendations(4级降级)、_ml_pipeline_recommend、cache_recommendations
 │   └── utils/                              # [目录] 工具函数
@@ -106,14 +106,14 @@ music_rec/
 │       ├── api/                            # [目录] API 调用封装
 │       │   ├── client.ts                   # [HTTP] Axios 实例：baseURL=/api/v1、JWT 注入拦截器、401 自动刷新拦截器
 │       │   ├── auth.ts                     # [API] authApi：register、login、refresh、logout
-│       │   └── tracks.ts                   # [API] tracksApi、recommendationsApi、interactionsApi、favoritesApi、usersApi
+│       │   └── tracks.ts                   # [API] tracksApi（含 newReleases / genreRandom / genreRanking）、recommendationsApi、interactionsApi、favoritesApi、usersApi
 │       ├── types/                          # [目录] TypeScript 类型定义
 │       │   └── index.ts                    # [类型] Track、User、TokenResponse、RecommendationResponse、InteractionCreate
 │       ├── views/                          # [目录] 页面级视图组件
 │       │   ├── Home.vue                    # [页面] 首页：推荐卡片网格 + 热门排行列表
 │       │   ├── Login.vue                   # [页面] 登录：用户名/密码表单 → auth.login()
 │       │   ├── Register.vue                # [页面] 注册：用户名/密码/确认/年龄/性别/国家表单 → auth.register()
-│       │   ├── Discover.vue                # [页面] 发现：搜索框 + 歌曲列表 + 分页
+│       │   ├── Discover.vue                # [页面] 发现：搜索、新歌速递、曲风随机/热榜浏览
 │       │   ├── Profile.vue                 # [页面] 个人中心：用户头像/信息、修改资料表单、统计卡片
 │       │   └── Favorites.vue               # [页面] 收藏：收藏歌曲列表
 │       ├── components/                     # [目录] 可复用组件

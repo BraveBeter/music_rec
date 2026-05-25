@@ -20,6 +20,9 @@
         <button @click="doImport('lastfm')" :disabled="loading">
           生成 LastFM 用户数据 (~800人)
         </button>
+        <button @click="doImport('enrich-lastfm')" :disabled="loading || enrichRunning">
+          {{ enrichRunning ? '补全运行中' : '补全 Last.fm 媒体资源' }}
+        </button>
         <button @click="doImport('synthetic')" :disabled="loading">
           生成合成用户数据 (60人)
         </button>
@@ -32,9 +35,10 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import StatCard from '@/components/StatCard.vue'
-import { getSystemStatus, generateLastfm, generateSynthetic, importDeezer } from '@/api/admin'
+import { getSystemStatus, generateLastfm, generateSynthetic, importDeezer, importJamendo, enrichLastfmMedia } from '@/api/admin'
 
 const loading = ref(false)
+const enrichRunning = ref(false)
 const msg = ref('')
 const msgType = ref('info')
 
@@ -61,6 +65,14 @@ async function doImport(type: string) {
     if (type === 'lastfm') {
       const { data } = await generateLastfm()
       msg.value = `LastFM 数据生成已启动 (PID: ${data.pid})`
+    } else if (type === 'enrich-lastfm') {
+      enrichRunning.value = true
+      const { data } = await enrichLastfmMedia(500)
+      if (data.status === 'already_running') {
+        msg.value = 'Last.fm 媒体补全已在运行中，请稍后查看日志'
+      } else {
+        msg.value = `Last.fm 媒体补全已启动，本批最多处理 ${data.limit || 500} 首`
+      }
     } else if (type === 'synthetic') {
       const { data } = await generateSynthetic()
       msg.value = `合成数据生成已启动 (PID: ${data.pid})`
@@ -68,7 +80,7 @@ async function doImport(type: string) {
       const { data } = await importDeezer()
       msg.value = `Deezer 导入完成: ${data.inserted} 首`
     } else if (type === 'jamendo') {
-      const { data } = await importDeezer(
+      const { data } = await importJamendo(
         ['rock', 'pop', 'hiphop', 'electronic', 'jazz', 'classical', 'rnb', 'latin'], 50
       )
       msg.value = `Jamendo 导入完成: ${data.inserted} 首`

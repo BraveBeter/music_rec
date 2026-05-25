@@ -29,6 +29,10 @@ export interface TokenResponse {
   user_id: number
   username: string
   role: string
+  age?: number | null
+  gender?: number | null
+  country?: string | null
+  created_at?: string | null
 }
 
 export interface RecommendationResponse {

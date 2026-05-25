@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import apiClient from '@/api/client'
 import { usersApi } from '@/api/tracks'
@@ -20,8 +20,22 @@ const stats = reactive({
   days_registered: null as number | null,
 })
 
+function syncProfileForm() {
+  profile.age = auth.user?.age ?? null
+  profile.gender = auth.user?.gender ?? null
+  profile.country = auth.user?.country ?? ''
+}
+
+watch(() => auth.user, syncProfileForm, { immediate: true, deep: true })
+
 onMounted(async () => {
   if (auth.isLoggedIn) {
+    try {
+      await auth.loadProfile()
+    } catch (e) {
+      console.error('Failed to load profile:', e)
+    }
+
     try {
       const { data } = await usersApi.stats()
       stats.play_count = data.play_count

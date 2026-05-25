@@ -21,6 +21,10 @@ class TokenResponse(BaseModel):
     user_id: int
     username: str
     role: str
+    age: int | None = None
+    gender: int | None = None
+    country: str | None = None
+    created_at: str | None = None
 
 
 class RefreshResponse(BaseModel):

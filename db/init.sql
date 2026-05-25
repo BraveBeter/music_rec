@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     cover_url    VARCHAR(512)  NULL COMMENT '封面图URL',
     created_at   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_status (status),
-    INDEX idx_play_count (play_count DESC)
+    INDEX idx_play_count (play_count DESC),
+    INDEX idx_new_releases (status, release_year DESC, created_at DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 用户行为日志表

@@ -57,6 +57,21 @@ async def get_popular_tracks(db: AsyncSession, limit: int = 20) -> list[Track]:
     return result.scalars().all()
 
 
+async def get_new_releases(db: AsyncSession, limit: int = 20) -> list[Track]:
+    """Get newly released tracks, using release year then import time as ordering signals."""
+    result = await db.execute(
+        select(Track)
+        .where(Track.status == 1)
+        .order_by(
+            Track.release_year.desc(),
+            Track.created_at.desc(),
+            Track.track_id.asc(),
+        )
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
 async def get_diverse_popular_tracks(
     db: AsyncSession,
     limit: int = 20,

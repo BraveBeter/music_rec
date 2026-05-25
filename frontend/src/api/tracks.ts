@@ -30,6 +30,10 @@ export const tracksApi = {
     return apiClient.get<Track[]>('/tracks/popular', { params: { limit } })
   },
 
+  newReleases(limit = 12) {
+    return apiClient.get<Track[]>('/tracks/new-releases', { params: { limit } })
+  },
+
   genreRandom(perGenre = 5) {
     return apiClient.get<GenreTracksResponse>('/tracks/genre-random', { params: { per_genre: perGenre } })
   },

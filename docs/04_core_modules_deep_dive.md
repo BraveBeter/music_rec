@@ -148,6 +148,9 @@ export default defineConfig({
 | GET | `/api/v1/users/me/favorites/ids` | 必须 | `get_favorite_ids()` | 无 | `{track_ids: string[]}` |
 | GET | `/api/v1/tracks` | 无 | `list_tracks()` | `?query=&page=1&page_size=20` | `{items, total, page, page_size}` |
 | GET | `/api/v1/tracks/popular` | 无 | `popular_tracks()` | `?limit=20` | `Track[]` |
+| GET | `/api/v1/tracks/new-releases` | 无 | `new_release_tracks()` | `?limit=12` | `Track[]`（按 `release_year DESC, created_at DESC` 排序） |
+| GET | `/api/v1/tracks/genre-random` | 无 | `genre_random_tracks()` | `?per_genre=5` | `{genres: [{genre, tracks[]}]}` |
+| GET | `/api/v1/tracks/genre-ranking` | 无 | `genre_ranking_tracks()` | `?top_k=10` | `{genres: [{genre, tracks[]}]}` |
 | GET | `/api/v1/tracks/{track_id}` | 无 | `get_track()` | path: track_id | `TrackResponse` |
 | GET | `/api/v1/tracks/{track_id}/preview` | 无 | `proxy_preview()` | path: track_id | StreamingResponse (audio/mpeg) |
 | POST | `/api/v1/interactions` | 必须 | `create_interaction()` | `{track_id, interaction_type(1-4), rating?, play_duration?}` | `{interaction_id}` |
@@ -164,7 +167,7 @@ export default defineConfig({
 | `/` | `Home.vue` | 无 | 首页：推荐 + 热门 |
 | `/login` | `Login.vue` | `{guest: true}` | 仅未登录可访问 |
 | `/register` | `Register.vue` | `{guest: true}` | 仅未登录可访问 |
-| `/discover` | `Discover.vue` | 无 | 搜索浏览曲库 |
+| `/discover` | `Discover.vue` | 无 | 搜索浏览曲库 + 新歌速递 + 曲风浏览 |
 | `/profile` | `Profile.vue` | `{requiresAuth: true}` | 需登录 |
 | `/favorites` | `Favorites.vue` | `{requiresAuth: true}` | 需登录 |
 

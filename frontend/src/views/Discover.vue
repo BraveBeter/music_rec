@@ -13,6 +13,8 @@ const page = ref(1)
 const total = ref(0)
 const pageSize = 20
 const loading = ref(false)
+const newReleases = ref<Track[]>([])
+const newReleasesLoading = ref(false)
 
 async function loadTracks() {
   loading.value = true
@@ -54,6 +56,18 @@ function prevPage() {
   }
 }
 
+async function loadNewReleases() {
+  newReleasesLoading.value = true
+  try {
+    const { data } = await tracksApi.newReleases(12)
+    newReleases.value = data
+  } catch (e) {
+    console.error('Failed to load new releases:', e)
+  } finally {
+    newReleasesLoading.value = false
+  }
+}
+
 const genreRandom = ref<GenreTracksResponse | null>(null)
 const genreRandomLoading = ref(false)
 
@@ -86,7 +100,7 @@ async function loadGenreRanking() {
 
 onMounted(async () => {
   loadTracks()
-  await Promise.all([loadGenreRandom(), loadGenreRanking()])
+  await Promise.all([loadNewReleases(), loadGenreRandom(), loadGenreRanking()])
 })
 
 const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23121212" width="100" height="100"/><text x="50" y="56" text-anchor="middle" fill="%231ed760" font-size="38">♪</text></svg>'
@@ -150,6 +164,59 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
     <section class="section-block animate-slide-up" style="animation-delay: 100ms">
       <div class="section-top">
         <div>
+          <h2 class="section-heading">新歌速递</h2>
+          <p class="section-copy">最近发行和入库的曲目，先于热度沉淀进入发现流。</p>
+        </div>
+        <span v-if="newReleases.length" class="pill-tag pill-tag--accent">{{ newReleases.length }} New</span>
+      </div>
+
+      <div v-if="newReleasesLoading" class="new-release-grid">
+        <div v-for="i in 6" :key="i" class="new-release-card new-release-skeleton">
+          <div class="skeleton skeleton-release-cover"></div>
+          <div class="skeleton skeleton-release-title"></div>
+          <div class="skeleton skeleton-release-meta"></div>
+        </div>
+      </div>
+
+      <div v-else-if="newReleases.length" class="new-release-grid">
+        <article
+          v-for="track in newReleases"
+          :key="track.track_id"
+          class="new-release-card"
+          role="button"
+          tabindex="0"
+          @click="player.play(track, newReleases)"
+          @keydown.enter="player.play(track, newReleases)"
+          @keydown.space.prevent="player.play(track, newReleases)"
+        >
+          <div class="release-cover-wrap">
+            <img :src="track.cover_url || coverFallback" :alt="track.title" class="release-cover" />
+            <span class="release-play" aria-hidden="true">▶</span>
+          </div>
+          <div class="release-copy">
+            <strong class="release-title">{{ track.title }}</strong>
+            <router-link
+              v-if="track.artist_name"
+              :to="`/artist/${encodeURIComponent(track.artist_name)}`"
+              class="release-artist"
+              @click.stop
+            >
+              {{ track.artist_name }}
+            </router-link>
+            <span v-else class="release-artist">Unknown Artist</span>
+            <span class="release-year">{{ track.release_year ? `${track.release_year} 发行` : '最新入库' }}</span>
+          </div>
+        </article>
+      </div>
+
+      <div v-else class="empty-state">
+        <p>暂无新歌。</p>
+      </div>
+    </section>
+
+    <section class="section-block animate-slide-up" style="animation-delay: 180ms">
+      <div class="section-top">
+        <div>
           <h2 class="section-heading">类型推荐</h2>
           <p class="section-copy">适合漫游和快速试播的随机精选。</p>
         </div>
@@ -203,7 +270,7 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
       </div>
     </section>
 
-    <section class="section-block animate-slide-up" style="animation-delay: 180ms">
+    <section class="section-block animate-slide-up" style="animation-delay: 260ms">
       <div class="section-top">
         <div>
           <h2 class="section-heading">类型热榜</h2>
@@ -309,6 +376,136 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
 .refresh-btn span.spinning {
   display: inline-block;
   animation: spin 0.8s linear infinite;
+}
+
+.new-release-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.875rem;
+}
+
+.new-release-card {
+  min-width: 0;
+  padding: 0.875rem;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(37, 37, 37, 0.96), rgba(24, 24, 24, 0.98));
+  box-shadow: var(--shadow-medium);
+  cursor: pointer;
+  transition:
+    transform var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.new-release-card:hover,
+.new-release-card:focus-visible {
+  transform: translateY(-2px);
+  background: linear-gradient(180deg, rgba(45, 45, 45, 0.98), rgba(31, 31, 31, 1));
+  box-shadow: var(--shadow-heavy);
+  outline: none;
+}
+
+.release-cover-wrap {
+  position: relative;
+  aspect-ratio: 1;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface-strong);
+  margin-bottom: 0.75rem;
+}
+
+.release-cover {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.release-play {
+  position: absolute;
+  right: 0.625rem;
+  bottom: 0.625rem;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-circle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-accent);
+  color: #000000;
+  font-size: 0.9rem;
+  box-shadow: var(--shadow-medium);
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+.new-release-card:hover .release-play,
+.new-release-card:focus-visible .release-play {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.release-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.release-title,
+.release-artist,
+.release-year {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.release-title {
+  color: var(--color-text-base);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+}
+
+.release-artist {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.release-artist:hover {
+  color: var(--color-text-base);
+}
+
+.release-year {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.new-release-skeleton {
+  cursor: default;
+}
+
+.skeleton-release-cover {
+  aspect-ratio: 1;
+  width: 100%;
+  margin-bottom: 0.75rem;
+  border-radius: var(--radius-lg);
+}
+
+.skeleton-release-title {
+  width: 86%;
+  height: 16px;
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-release-meta {
+  width: 58%;
+  height: 12px;
 }
 
 .genre-board {
@@ -459,6 +656,10 @@ const coverFallback = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg
 }
 
 @media (max-width: 768px) {
+  .new-release-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .genre-board {
     grid-template-columns: 1fr;
   }

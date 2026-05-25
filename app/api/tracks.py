@@ -9,7 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.schemas.track import TrackResponse, TrackListResponse, GenreTracksResponse, GenreTracksItem
-from app.services.track_service import get_tracks, get_track_by_id, get_popular_tracks, get_diverse_popular_tracks, get_genre_random, get_genre_ranking
+from app.services.track_service import (
+    get_tracks,
+    get_track_by_id,
+    get_diverse_popular_tracks,
+    get_genre_random,
+    get_genre_ranking,
+    get_new_releases,
+)
 
 router = APIRouter(prefix="/tracks", tags=["Tracks"])
 logger = logging.getLogger("music_rec")
@@ -121,6 +128,16 @@ async def popular_tracks(
 ):
     """Get popular tracks with genre diversity."""
     tracks = await get_diverse_popular_tracks(db, limit=limit, max_per_genre=3)
+    return [TrackResponse.model_validate(t) for t in tracks]
+
+
+@router.get("/new-releases", response_model=list[TrackResponse])
+async def new_release_tracks(
+    limit: int = Query(12, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get latest tracks by release year and import time."""
+    tracks = await get_new_releases(db, limit=limit)
     return [TrackResponse.model_validate(t) for t in tracks]
 
 
